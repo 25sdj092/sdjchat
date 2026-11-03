@@ -11,7 +11,7 @@ Vercel 정적 배포 + Supabase Auth / PostgreSQL / Realtime / Storage / Edge Fu
 - 데이터베이스 스키마, RLS, 비공개 사진 버킷, Realtime publication은 이미 이 프로젝트에 적용되어 있습니다.
 - `send-push` Edge Function도 배포되어 있습니다.
 
-> 이 ZIP을 현재 Supabase 프로젝트에 연결할 때 `supabase/schema.sql`을 다시 실행하지 마세요. 이미 적용된 마이그레이션과 중복될 수 있습니다. 새 Supabase 프로젝트에 설치할 때만 아래 SQL 단계를 사용하세요.
+> 현재 연결된 프로젝트에는 데이터베이스 설정이 이미 적용되어 있습니다. 이 저장소의 `supabase/` 폴더에는 CLI 설정과 배포된 Edge Function 소스가 들어 있지만, 기존 5개 마이그레이션의 SQL 원문은 아직 포함되어 있지 않습니다. 따라서 새 Supabase 프로젝트를 이 저장소만으로 초기화할 수는 없습니다. 세부 내용은 `supabase/README.md`를 확인하세요.
 
 ## 가장 먼저 할 일: 익명 로그인 활성화
 
@@ -71,15 +71,9 @@ Supabase Dashboard에서 다음 페이지를 열고 **Anonymous Sign-Ins**를 �
 
 ## 새 Supabase 프로젝트에 설치할 때
 
-현재 프로젝트에는 다시 실행하지 마세요. 완전히 새 프로젝트에서만 사용합니다.
+현재 저장소에는 기존 데이터베이스 마이그레이션 SQL 원문이 포함되어 있지 않습니다. 따라서 이 저장소를 새 프로젝트에 연결한 뒤 곧바로 `supabase db push` 또는 `supabase db reset`을 실행하지 마세요. 기존 프로젝트의 데이터베이스 구조는 이미 적용되어 있습니다.
 
-1. Supabase 프로젝트 생성
-2. **Authentication → Providers → Anonymous Sign-Ins** 활성화
-3. SQL Editor에서 `supabase/schema.sql` 전체 실행
-4. `supabase/functions/send-push/index.ts`를 `send-push`로 배포 (`verify_jwt=false`; 함수가 별도 인증을 수행)
-5. 프로젝트 URL 및 Publishable Key를 `public/config.js` 또는 Vercel 빌드 환경변수에 입력
-
-SQL 스키마는 비공개 `chat-images` 버킷, Storage 정책, RLS, Realtime 등록 및 푸시 trigger 주소를 구성합니다. Edge Function은 Supabase가 제공하는 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 런타임 환경변수를 사용합니다. 서비스 키를 프런트엔드에 복사하지 마세요.
+현재 프로젝트에 배포된 Edge Function의 소스는 `supabase/functions/send-push/index.ts`에 보관되어 있으며, 설정은 `supabase/config.toml`에 있습니다. 새 프로젝트용 전체 데이터베이스 설치 절차가 필요한 경우 마이그레이션 원문을 먼저 확보해야 합니다.
 
 ## 두 사용자 테스트
 
