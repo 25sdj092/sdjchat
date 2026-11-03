@@ -1,0 +1,16 @@
+# Supabase CLI project configuration.
+# Link this local project with: supabase link --project-ref tunrakwqldpcxrtbdeuq
+project_id = "sdjchat"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+major_version = 17
+
+[functions.send-push]
+# The function validates either the user's bearer token or the internal webhook secret itself.
+verify_jwt = false
