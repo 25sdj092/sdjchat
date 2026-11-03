@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>메신저</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="reg" hidden>
+  <form id="rf" autocomplete="off">
+    <h1>메신저</h1>
+    <input id="nm" maxlength="20" placeholder="이름" aria-label="이름">
+    <button id="go" class="pri" type="submit">시작</button>
+    <p id="rs"></p>
+  </form>
+</div>
+
+<div id="app" data-v="list" hidden>
+  <aside>
+    <div class="top"><b>메신저</b><span class="net"><i id="nd" class="dot"></i><span id="nt"></span></span></div>
+    <div class="me">
+      <div class="mr"><div id="myn" class="nm"></div><button id="lo" type="button">로그아웃</button></div>
+      <div class="code">내 코드 <b id="myc"></b><button id="cp" type="button">복사</button></div>
+    </div>
+    <div class="acts">
+      <button id="addb" type="button">+ 친구 추가</button>
+      <button id="roomb" type="button">방 만들기</button>
+      <button id="nb" type="button">알림 켜기</button>
+    </div>
+    <p id="nst" hidden></p>
+    <form id="addp" hidden autocomplete="off">
+      <div class="row">
+        <input id="ac" inputmode="numeric" maxlength="4" placeholder="친구 코드 4자리" aria-label="친구 코드">
+        <button id="ago" class="pri" type="submit">요청</button>
+      </div>
+      <p id="ast"></p>
+    </form>
+    <div id="roomp" hidden>
+      <form id="rmk" class="row" autocomplete="off">
+        <input id="rn" maxlength="30" placeholder="새 방 이름" aria-label="방 이름">
+        <button id="rmkb" class="pri" type="submit">만들기</button>
+      </form>
+      <form id="rjn" class="row" autocomplete="off">
+        <input id="rc" inputmode="numeric" maxlength="6" placeholder="방 코드 6자리" aria-label="방 코드">
+        <button id="rjnb" class="pri" type="submit">참가</button>
+      </form>
+      <p id="rst"></p>
+    </div>
+    <div id="rq" hidden>
+      <h2>친구 요청</h2>
+      <ul id="rql"></ul>
+    </div>
+    <div id="lists">
+      <ul id="fl"></ul>
+      <h2 id="rh" hidden>방</h2>
+      <ul id="rl"></ul>
+    </div>
+  </aside>
+
+  <main>
+    <div id="empty">친구나 방을 선택하세요</div>
+    <section id="chat" hidden>
+      <header>
+        <button id="bk" class="back" type="button" aria-label="목록">‹</button>
+        <div class="hd"><div id="cn" class="nm"></div><div id="cs" class="st"></div></div>
+        <div class="hb">
+          <button id="pb" type="button" hidden>참여자</button>
+          <button id="lv" type="button" hidden>나가기</button>
+        </div>
+      </header>
+      <div id="pl" hidden></div>
+      <div id="ms"></div>
+      <div id="hint"></div>
+      <form id="cf">
+        <button id="at" type="button" aria-label="사진 첨부">사진</button>
+        <input id="fi" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <textarea id="inp" rows="1" maxlength="2000" placeholder="메시지 입력" aria-label="메시지"></textarea>
+        <button id="sd" class="pri" type="submit">전송</button>
+      </form>
+    </section>
+  </main>
+</div>
+
+<div id="lb" hidden><img alt="사진"></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
