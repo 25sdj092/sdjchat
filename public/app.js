@@ -999,10 +999,11 @@ async function joinOpenRoom(id) {
   await reload();
   openChat(id);
 }
+function nameNotice(message) { toast('이름 수정', message, null); }
 async function editMyName() {
   var availableAt = me.nameChangedAt ? new Date(me.nameChangedAt).getTime() + 7 * 24 * 60 * 60 * 1000 : 0;
   if (availableAt > Date.now()) {
-    hint(new Date(availableAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) + ' 이후 이름을 다시 수정할 수 있습니다.');
+    nameNotice(new Date(availableAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) + ' 이후 이름을 다시 수정할 수 있습니다.');
     return;
   }
   if (!confirm('이름은 7일에 한 번만 수정할 수 있습니다. 지금 수정하면 변경한 시점부터 7일 후에 다시 수정할 수 있습니다.\\n계속하시겠습니까?')) return;
@@ -1010,16 +1011,16 @@ async function editMyName() {
   if (next === null) return;
   next = next.trim();
   if (!/^[가-힣0-9]{1,12}$/.test(next)) {
-    hint('이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.');
+    nameNotice('이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.');
     return;
   }
-  if (next === me.name) return hint('현재 사용 중인 이름과 같습니다.');
+  if (next === me.name) { nameNotice('현재 사용 중인 이름과 같습니다.'); return; }
   var r = await sb.rpc('update_my_name', { p_name: next });
   if (r.error) {
     var nameError = msgOf(r.error);
-    if (nameError.indexOf('username_taken') >= 0) hint('이미 사용 중인 이름입니다. 다른 이름을 입력하세요.');
-    else if (nameError.indexOf('name_change_cooldown:') >= 0) hint(nameError.split('name_change_cooldown:')[1].trim() + ' 이후 이름을 다시 수정할 수 있습니다.');
-    else hint('이름을 수정하지 못했습니다.');
+    if (nameError.indexOf('username_taken') >= 0) nameNotice('이미 사용 중인 이름입니다. 다른 이름을 입력하세요.');
+    else if (nameError.indexOf('name_change_cooldown:') >= 0) nameNotice(nameError.split('name_change_cooldown:')[1].trim() + ' 이후 이름을 다시 수정할 수 있습니다.');
+    else nameNotice('이름을 수정하지 못했습니다.');
     return;
   }
   me.name = next; me.nameChangedAt = r.data && r.data.username_changed_at || new Date().toISOString();
@@ -1031,7 +1032,7 @@ async function editMyName() {
   });
   refreshNames(); updateHeader(); renderPanel(); renderLists();
   await reload();
-  hint('이름을 수정했습니다.');
+  nameNotice('이름을 수정했습니다. 다음 수정은 7일 후에 가능합니다.');
 }
 async function renameRoom() {
   var c = convs.get(active);
@@ -1310,7 +1311,7 @@ function copyText(text, b) {
   var old = b ? b.textContent : '';
   var ok = function () {
     if (b) { b.textContent = '복사됨'; setTimeout(function () { b.textContent = old; }, 1200); }
-    else hint('내 코드가 복사되었습니다.');
+    else toast('내 코드', '4자리 코드가 복사되었습니다.', null);
   };
   var fb = function () {
     var t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select();
