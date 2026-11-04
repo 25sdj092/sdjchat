@@ -729,7 +729,8 @@ var vapidKey = '', pushBusy = false, nbState = '', lastErr = '', notified = new 
 function pushOk() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
 function pushOff() { return lget('pm_pushoff', false); }          // 사용자가 직접 끈 기기
 function setNst(text, cls) {
-  // 상태 표시 줄은 화면에서 제거했으며 알림 기능은 그대로 유지한다.
+  // 성공 상태 문구는 표시하지 않는다. 실패만 짧은 토스트로 알린다.
+  if (text && cls === 'bad' && me) toast('알림 설정', text, null);
 }
 function errMsg(e) {
   var st = e && e.context && e.context.status;
