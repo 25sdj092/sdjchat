@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
     const { data: subs, error } = await admin.from("push_subscriptions").select("id, subscription").eq("user_id", user.id);
     if (error) return json({ error: "db_error" }, 500);
     if (!subs?.length) return json({ sent: 0, subscriptions: 0, reason: "no_subscriptions" });
-    const payload = JSON.stringify({ title: "SDJ Chat 알림 테스트", body: "이 알림이 보이면 푸시 설정이 정상입니다.", c: null, tag: "sdj-test", test: true });
+    const payload = JSON.stringify({ title: "서고챗 알림 테스트", body: "이 알림이 보이면 푸시 설정이 정상입니다.", c: null, tag: "sdj-test", test: true });
     const r = await deliver(subs as Sub[], payload, {});
     return json({ ...r, subscriptions: subs.length });
   }
@@ -223,7 +223,7 @@ Deno.serve(async (req) => {
   const sender = (msg as any).profiles?.username ?? "새 메시지";
   // deno-lint-ignore no-explicit-any
   const conv = (msg as any).conversations;
-  const title = conv?.type === "open" ? `${sender} · ${conv.name}` : sender;
+  const title = (conv?.type === "open" || conv?.type === "group") ? `${sender} · ${conv.name}` : sender;
   const notificationBody = msg.message_type === "image"
     ? "사진을 보냈습니다."
     : String(msg.content).replace(/\s+/g, " ").trim().slice(0, 80);
