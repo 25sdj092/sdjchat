@@ -6,7 +6,6 @@ begin;
 -- conversations 삭제로 messages와 conversation_members가 cascade 삭제된다.
 delete from public.conversations;
 delete from auth.users;
-delete from public.push_deliveries;
 -- 기존 코드 기반 그룹방 RPC를 제거한다.
 drop function if exists public.create_room(text);
 drop function if exists public.join_room(text);
