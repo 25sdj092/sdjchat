@@ -864,7 +864,7 @@ async function refreshNb() {      // 권한 상태 / 구독 상태 / 서버 등�
   if (perm !== Notification.permission) return refreshNb();        // 확인하는 사이 권한이 바뀐 경우
   if (sub && saved) {
     nbState = 'on'; b.textContent = '알림 끄기';
-    setNst(lastErr || '푸시 구독 완료 — 탭을 닫아도 새 메시지 알림이 옵니다.', lastErr ? 'bad' : 'ok');
+    if (lastErr) setNst(lastErr, 'bad');
   } else if (sub) {
     nbState = 'unsaved'; b.textContent = '알림 켜기';
     setNst(lastErr || 'Push 구독 실패 — 서버에 등록되지 않았습니다. "알림 켜기"로 다시 시도하세요.', 'bad');
