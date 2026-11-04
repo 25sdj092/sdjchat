@@ -41,6 +41,7 @@ create table if not exists public.conversations (
   created_by      uuid references public.profiles(id) on delete cascade,
   direct_key      text unique,
   last_message_at timestamptz,
+  member_count_updated_at timestamptz,
   created_at      timestamptz not null default now(),
   check (
     (type = 'open' and name is not null and created_by is not null and direct_key is null) or
@@ -409,6 +410,17 @@ end $$;
 drop trigger if exists messages_touch_open_room on public.messages;
 create trigger messages_touch_open_room after insert on public.messages
   for each row execute function private.touch_open_room_activity();
+
+create or replace function private.touch_open_room_members()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  update public.conversations set member_count_updated_at = now()
+    where id = new.conversation_id and type = 'open';
+  return new;
+end $$;
+drop trigger if exists members_touch_open_room on public.conversation_members;
+create trigger members_touch_open_room after insert or update of left_at on public.conversation_members
+  for each row execute function private.touch_open_room_members();
 
 -- 읽음 위치 저장: 앞으로만 이동, 같은 방의 메시지만 허용, 내 행만 수정
 create or replace function public.mark_read(p_conv uuid, p_message uuid)
@@ -803,3 +815,4 @@ revoke all on function public.create_open_room(text), public.join_open_room(uuid
 grant execute on function public.create_open_room(text), public.join_open_room(uuid),
   public.leave_open_room(uuid), public.list_open_rooms() to authenticated;
 revoke all on function private.touch_open_room_activity() from public, anon, authenticated;
+revoke all on function private.touch_open_room_members() from public, anon, authenticated;
