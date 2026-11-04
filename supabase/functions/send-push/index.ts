@@ -223,7 +223,7 @@ Deno.serve(async (req) => {
   const sender = (msg as any).profiles?.username ?? "새 메시지";
   // deno-lint-ignore no-explicit-any
   const conv = (msg as any).conversations;
-  const title = conv?.type === "group" ? `${sender} · ${conv.name}` : sender;
+  const title = conv?.type === "open" ? `${sender} · ${conv.name}` : sender;
   const notificationBody = msg.message_type === "image"
     ? "사진을 보냈습니다."
     : String(msg.content).replace(/\s+/g, " ").trim().slice(0, 80);
