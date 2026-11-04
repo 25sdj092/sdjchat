@@ -23,7 +23,7 @@
     <div class="top"><b>서고챗</b><span class="net"><i id="nd" class="dot"></i><span id="nt"></span></span></div>
     <div class="me">
       <div class="mr"><div id="myn" class="nm"></div><button id="nameb" type="button">이름 수정</button><button id="lo" type="button">로그아웃</button></div>
-      <div class="code">내 코드 <b id="myc"></b><button id="cp" type="button">복사</button></div>
+      <div class="code">내 코드 <b id="myc" role="button" tabindex="0" title="숫자를 클릭하면 복사됩니다."></b></div>
     </div>
     <div class="acts">
       <button id="addb" type="button">+ 친구 추가</button>
@@ -38,18 +38,32 @@
       <p id="ast"></p>
     </form>
     <div id="roomp" hidden>
-      <form id="rmk" class="row" autocomplete="off">
-        <input id="rn" maxlength="30" placeholder="오픈채팅방 이름" aria-label="오픈채팅방 이름">
-        <button id="rmkb" class="pri" type="submit">오픈채팅 만들기</button>
-      </form>
-      <form id="gmk" class="row" autocomplete="off">
-        <input id="grn" maxlength="30" placeholder="6자리 코드방 이름" aria-label="코드방 이름">
-        <button id="grmb" type="submit">6자리 코드방 만들기</button>
-      </form>
-      <form id="cjn" class="row" autocomplete="off">
-        <input id="rc" inputmode="numeric" maxlength="6" placeholder="방 코드 6자리" aria-label="방 코드">
-        <button id="rcb" type="submit">코드 참가</button>
-      </form>
+      <div class="roomp-head"><strong>방 만들기 / 참가</strong><button id="roomClose" type="button">닫기</button></div>
+      <p class="room-guide">원하는 방식의 방을 선택하세요.</p>
+      <section class="room-card">
+        <div class="room-card-title">오픈채팅 만들기</div>
+        <p>오픈채팅 목록에 공개됩니다. 다른 사용자도 목록에서 찾아 참가할 수 있습니다.</p>
+        <form id="rmk" class="room-form" autocomplete="off">
+          <input id="rn" maxlength="30" placeholder="오픈채팅방 이름" aria-label="오픈채팅방 이름">
+          <button id="rmkb" class="pri" type="submit">오픈채팅 만들기</button>
+        </form>
+      </section>
+      <section class="room-card">
+        <div class="room-card-title">6자리 코드방 만들기</div>
+        <p>방을 만든 뒤 발급되는 6자리 코드를 알려준 사람만 참가할 수 있습니다.</p>
+        <form id="gmk" class="room-form" autocomplete="off">
+          <input id="grn" maxlength="30" placeholder="코드방 이름" aria-label="코드방 이름">
+          <button id="grmb" class="pri" type="submit">코드 발급 및 만들기</button>
+        </form>
+      </section>
+      <section class="room-card">
+        <div class="room-card-title">코드로 참가하기</div>
+        <p>이미 받은 6자리 방 코드가 있을 때 사용하세요.</p>
+        <form id="cjn" class="room-form" autocomplete="off">
+          <input id="rc" inputmode="numeric" maxlength="6" placeholder="6자리 방 코드" aria-label="방 코드">
+          <button id="rcb" type="submit">방 참가</button>
+        </form>
+      </section>
       <p id="rst"></p>
     </div>
     <div id="rq" hidden>
@@ -81,6 +95,8 @@
       <div id="pl" hidden></div>
       <div id="ms"></div>
       <div id="hint"></div>
+      <div id="replying" hidden><span id="replyText"></span><button id="replyClear" type="button" aria-label="답글 취소">취소</button></div>
+      <div id="mentionMenu" hidden></div>
       <form id="cf">
         <button id="at" type="button" aria-label="사진 첨부">사진</button>
         <input id="fi" type="file" accept="image/jpeg,image/png,image/webp" hidden>
