@@ -116,8 +116,13 @@ select id, status_code, error_msg, left(content::text, 200) as content, created 
 1. Supabase 프로젝트 생성
 2. **Authentication → Providers → Anonymous Sign-Ins** 활성화
 3. SQL Editor에서 `supabase/schema.sql` 전체 실행
-4. `supabase/functions/send-push/index.ts`를 `send-push`로 배포 (`supabase/config.toml` 에 `verify_jwt=false` 가 지정되어 있음; 함수가 별도 인증을 수행)
-5. 프로젝트 URL 및 Publishable Key를 `public/config.js` 또는 Vercel 빌드 환경변수에 입력
+4. 아래 마이그레이션을 표시된 순서대로 각각 실행
+   - `supabase/migrations/20261104_profile_rooms_presence.sql`
+   - `supabase/migrations/20261104_chat_interactions_unique_names.sql`
+   - `supabase/migrations/20261104_chat_interaction_indexes.sql`
+   - `supabase/migrations/20261104_chat_message_insert_permission.sql`
+5. `supabase/functions/send-push/index.ts`를 `send-push`로 배포 (`supabase/config.toml` 에 `verify_jwt=false` 가 지정되어 있음; 함수가 별도 인증을 수행)
+6. 프로젝트 URL 및 Publishable Key를 `public/config.js` 또는 Vercel 빌드 환경변수에 입력
 
 SQL 스키마는 비공개 `chat-images` 버킷, Storage 정책, RLS, Realtime 등록 및 푸시 trigger 주소를 구성합니다. Edge Function은 Supabase가 제공하는 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 런타임 환경변수를 사용합니다. 서비스 키를 프런트엔드에 복사하지 마세요.
 
@@ -152,13 +157,17 @@ SQL 스키마는 비공개 `chat-images` 버킷, Storage 정책, RLS, Realtime �
 
 ## 서고챗 최근 기능
 
-- 프로필의 **이름 수정**으로 내 이름 변경 (한글+숫자 1~12자)
-- **방 생성**에서 공개 오픈채팅 만들기, 6자리 코드방 만들기, 기존 6자리 코드방 참가
-- 오픈채팅은 공개 목록에서 참가하며, 기존과 같이 계정당 생성은 1개로 제한
+- 이름은 한글+숫자 1~12자, **중복 불가**이며 이름 변경은 **7일에 한 번**만 가능
+- 이름 변경 전 7일 제한 안내를 표시하고, DB에서도 변경 주기를 확인
+- **방 생성** 패널에서 오픈채팅 생성 / 6자리 코드방 생성 / 코드로 참가를 각각 설명과 함께 구분
+- 내 4자리 코드는 숫자 자체를 클릭하거나 키보드로 선택해 복사
+- 메시지에 👍 ❤️ 😂 😮 😢 🎉 반응을 추가하거나 취소 가능
+- 메시지별 답글과 답글 미리보기 지원
+- 입력창에서 `@`를 입력하면 현재 방 참여자 이름을 추천하고, 선택한 사용자를 멘션으로 저장
+- 오픈채팅은 공개 목록에서 참가하며, 계정당 생성은 1개로 제한
 - 코드방은 생성 시 6자리 숫자 코드를 발급하며, 참가 코드 입력은 계정당 10분에 10회로 제한
 - 방장은 방 이름을 수정할 수 있고, 방 삭제는 1차 확인 후 `삭제하겠습니다`를 정확히 입력해야 진행
 - 방장은 자신이 만든 방만 삭제할 수 있으며, 삭제 시 메시지/참여자와 방 사진도 함께 정리
-- 방장은 방을 삭제할 수 있고, 일반 참여자는 방에서 나갈 수 있음
-- DM 목록은 Supabase Realtime Presence를 통해 온라인/오프라인을 표시
+- 일반 참여자는 방에서 나갈 수 있으며, DM 목록은 Supabase Realtime Presence로 온라인/오프라인 표시
 
 운영 적용 마이그레이션: `supabase/migrations/20261104_profile_rooms_presence.sql`
