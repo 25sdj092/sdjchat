@@ -1,5 +1,5 @@
 -- =====================================================================
--- 메신저 Supabase 스키마
+-- 서대전챗 Supabase 스키마
 -- Supabase 대시보드 > SQL Editor 에서 이 파일 전체를 한 번에 실행하세요.
 -- 여러 번 실행해도 안전하도록 작성되어 있습니다(idempotent).
 -- =====================================================================
@@ -107,13 +107,6 @@ create table if not exists public.app_settings (
   key   text primary key,
   value text not null
 );
-
--- 방 코드 무차별 대입 방지용 실패 기록
-create table if not exists public.join_failures (
-  user_id  uuid not null,
-  at       timestamptz not null default now()
-);
-create index if not exists join_failures_idx on public.join_failures (user_id, at);
 
 -- ---------------------------------------------------------------------
 -- 2. 권한 확인용 함수 (RLS 정책에서 사용, auth.uid() 기준)
@@ -477,7 +470,7 @@ $$;
 -- 5. 테이블 권한 (RLS 와 별개로 한 번 더 좁힌다)
 -- ---------------------------------------------------------------------
 revoke all on public.profiles, public.friendships, public.conversations, public.conversation_members,
-              public.messages, public.push_subscriptions, public.app_settings, public.join_failures
+              public.messages, public.push_subscriptions, public.app_settings
   from anon, authenticated;
 
 grant select on public.profiles, public.friendships, public.conversations, public.conversation_members,
@@ -498,7 +491,6 @@ alter table public.conversation_members enable row level security;
 alter table public.messages             enable row level security;
 alter table public.push_subscriptions   enable row level security;
 alter table public.app_settings         enable row level security;
-alter table public.join_failures        enable row level security;
 
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select to authenticated
@@ -782,14 +774,6 @@ create index if not exists messages_sender_id_idx on public.messages(sender_id);
 create index if not exists conversations_owner_id_idx on public.conversations(owner_id) where owner_id is not null;
 create index if not exists conversation_members_last_read_idx
   on public.conversation_members(last_read_message_id) where last_read_message_id is not null;
-alter table public.join_failures add column if not exists id bigint generated always as identity;
-do $$
-begin
-  if not exists (select 1 from pg_constraint where conrelid='public.join_failures'::regclass and contype='p') then
-    alter table public.join_failures add constraint join_failures_pkey primary key(id);
-  end if;
-end $$;
-
 
 -- ---------------------------------------------------------------------
 -- 13. 푸시 중복 방지/발송 기록 (supabase/migrations/20261103_push_fix.sql 과 동일)
