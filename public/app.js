@@ -19,7 +19,8 @@ function lget(k, d) { try { var v = localStorage.getItem(k); return v == null ? 
 function lset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
 /* ---------- 상태 ---------- */
-var sb = null, me = null, chan = null, netOk = false, loggingOut = false;
+var sb = null, me = null, chan = null, presenceChan = null, netOk = false, loggingOut = false;
+var onlineUsers = new Set();
 var convs = new Map();           // 내가 참여 중인 대화방
 var openRooms = [];             // 전체 공개 오픈채팅 목록
 var reqs = [];                   // 받은 친구 요청 [{id,name,code}]
@@ -89,6 +90,8 @@ function convItem(c) {
   var info = el('div', 'info');
   var o = otherOf(c);
   info.appendChild(el('div', 'nm', convName(c)));
+  var online = !!(o && onlineUsers.has(o.id));
+  info.appendChild(el('div', 'presence-status ' + (online ? 'online' : 'offline'), online ? '온라인' : '오프라인'));
   info.appendChild(el('div', 'c', o ? o.code : ''));
   var bd = el('span', 'bd');
   li.appendChild(info);
@@ -96,6 +99,19 @@ function convItem(c) {
   var x = el('button', 'x', '×'); x.type = 'button'; x.title = '친구 삭제';
   x.addEventListener('click', function (e) { e.stopPropagation(); removeFriend(c); });
   li.appendChild(x);
+  li.addEventListener('click', function () { openChat(c.id); });
+  fre[c.id] = { li: li, bd: bd };
+  setBadge(c);
+  return li;
+}
+function codeRoomItem(c) {
+  var li = el('li', 'fr' + (active === c.id ? ' sel' : ''));
+  var info = el('div', 'info');
+  info.appendChild(el('div', 'nm', c.name));
+  info.appendChild(el('div', 'c', '코드 ' + c.room_code + ' · ' + activeMembers(c).length + '명' + (c.owner === me.id ? ' · 방장' : '')));
+  var bd = el('span', 'bd');
+  li.appendChild(info);
+  li.appendChild(bd);
   li.addEventListener('click', function () { openChat(c.id); });
   fre[c.id] = { li: li, bd: bd };
   setBadge(c);
@@ -130,9 +146,12 @@ function renderOpenRooms() {
 }
 function renderLists() {
   fre = {};
-  var f = document.createDocumentFragment();
+  var f = document.createDocumentFragment(), g = document.createDocumentFragment();
   sortedConvs('direct').forEach(function (c) { f.appendChild(convItem(c)); });
+  sortedConvs('group').forEach(function (c) { g.appendChild(codeRoomItem(c)); });
   $('fl').replaceChildren(f);
+  $('cl').replaceChildren(g);
+  $('ch').hidden = !g.childNodes.length;
   renderOpenRooms();
   updateTitle();
 }
@@ -144,7 +163,7 @@ function setBadge(c) {
 function updateTitle() {
   var n = 0;
   convs.forEach(function (c) { n += c.unread || 0; });
-  document.title = (n ? '(' + (n > 99 ? '99+' : n) + ') ' : '') + '서대전챗';
+  document.title = (n ? '(' + (n > 99 ? '99+' : n) + ') ' : '') + '서고챗';
 }
 function renderReqs() {
   $('rq').hidden = !reqs.length;
@@ -189,7 +208,7 @@ function reload() {
 }
 async function loadAll() {
   var r1 = await sb.from('conversation_members')
-    .select('conversation_id,conversations(id,type,name,owner_id)')
+    .select('conversation_id,conversations(id,type,name,owner_id,room_code)')
     .eq('user_id', me.id).is('left_at', null);
   if (r1.error) throw r1.error;
   var mine = r1.data.filter(function (x) { return x.conversations; });
@@ -208,7 +227,7 @@ async function loadAll() {
   var next = new Map();
   mine.forEach(function (row) {
     var c = row.conversations;
-    next.set(c.id, { id: c.id, type: c.type, name: c.name, owner: c.owner_id, members: new Map(), unread: 0, lastAt: null });
+    next.set(c.id, { id: c.id, type: c.type, name: c.name, owner: c.owner_id, room_code: c.room_code, members: new Map(), unread: 0, lastAt: null });
   });
   res[0].data.forEach(function (m) {
     var c = next.get(m.conversation_id);
@@ -243,9 +262,11 @@ function updateHeader() {
   var c = convs.get(active);
   if (!c) return;
   $('cn').textContent = convName(c);
-  if (c.type === 'open') {
+  if (c.type === 'open' || c.type === 'group') {
     var o = c.members.get(c.owner);
-    $('cs').textContent = '오픈채팅 · 참여 ' + activeMembers(c).length + '명' + (o ? ' · 방장 ' + o.name : '');
+    var kind = c.type === 'open' ? '오픈채팅' : '6자리 코드방';
+    $('cs').textContent = kind + ' · 참여 ' + activeMembers(c).length + '명' +
+      (c.type === 'group' ? ' · 코드 ' + c.room_code : '') + (o ? ' · 방장 ' + o.name : '');
   } else {
     var p = otherOf(c);
     $('cs').textContent = p ? '개인 DM · 코드 ' + p.code : '개인 DM';
@@ -253,9 +274,16 @@ function updateHeader() {
 }
 function renderPanel() {
   var c = convs.get(active), box = $('pl');
-  if (!c || c.type !== 'open') { box.hidden = true; return; }
+  if (!c || c.type === 'direct') { box.hidden = true; return; }
   var members = activeMembers(c);
   var head = el('div', 'pc', '참여자 ' + members.length + '명');
+  if (c.type === 'group' && c.room_code) {
+    head.appendChild(document.createTextNode(' · 방 코드 '));
+    head.appendChild(el('b', null, c.room_code));
+    var copy = el('button', null, '복사'); copy.type = 'button';
+    copy.addEventListener('click', function () { copyText(c.room_code, copy); });
+    head.appendChild(copy);
+  }
   var ul = document.createElement('ul');
   members.forEach(function (m) {
     var li = el('li', null, m.name + (m.id === me.id ? ' (나)' : ''));
@@ -283,7 +311,11 @@ function openChat(id) {
   $('empty').hidden = true;
   $('chat').hidden = false;
   $('pl').hidden = true;
-  $('pb').hidden = $('lv').hidden = c.type !== 'open';
+  var isRoom = c.type === 'open' || c.type === 'group';
+  $('pb').hidden = !isRoom;
+  $('lv').hidden = !isRoom;
+  $('rnm').hidden = !isRoom || c.owner !== me.id;
+  $('lv').textContent = c.owner === me.id ? '방 삭제' : '나가기';
   updateHeader();
   hint('');
   shown = new Map(); queued = [];
@@ -573,8 +605,12 @@ function scheduleOpenRoomsReload() {
     if (!r.error) { openRooms = r.data || []; renderOpenRooms(); }
   }, 500);
 }
+function scheduleRoomReload() {
+  scheduleReload();
+  scheduleOpenRoomsReload();
+}
 function startRealtime() {
-  if (chan) return;               // 중복 구독 방지
+  if (chan) return;
   var seen = false;
   chan = sb.channel('app-' + me.id)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, function (p) { onMsg(p.new); })
@@ -582,12 +618,40 @@ function startRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_members' }, scheduleReload)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'friendships' }, scheduleReload)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'friendships' }, scheduleReload)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations' }, scheduleOpenRoomsReload)
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversations' }, scheduleOpenRoomsReload)
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'conversations' }, scheduleOpenRoomsReload)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations' }, scheduleRoomReload)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversations' }, scheduleRoomReload)
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'conversations' }, scheduleRoomReload)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, scheduleReload)
     .subscribe(function (status) {
       if (status === 'SUBSCRIBED') { setNet(true); if (seen) sync(); seen = true; }
       else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setNet(false, '서버 연결 끊김 · 재연결 중');
+    });
+}
+function refreshOnlineUsers() {
+  if (!presenceChan) return;
+  var state = presenceChan.presenceState(), next = new Set();
+  Object.keys(state).forEach(function (key) {
+    (state[key] || []).forEach(function (p) {
+      if (p && p.user_id) next.add(p.user_id);
+    });
+  });
+  onlineUsers = next;
+  scheduleRender();
+}
+function startPresence() {
+  if (presenceChan || !sb || !me) return;
+  var pc = sb.channel('seogochat-presence', { config: { presence: { key: uuid() } } });
+  presenceChan = pc;
+  pc.on('presence', { event: 'sync' }, refreshOnlineUsers)
+    .on('presence', { event: 'join' }, refreshOnlineUsers)
+    .on('presence', { event: 'leave' }, refreshOnlineUsers)
+    .subscribe(async function (status) {
+      if (status === 'SUBSCRIBED') {
+        try { await pc.track({ user_id: me.id }); refreshOnlineUsers(); }
+        catch (e) { onlineUsers.delete(me.id); scheduleRender(); }
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        onlineUsers.delete(me.id); scheduleRender();
+      }
     });
 }
 function onMsg(m) {
@@ -652,6 +716,8 @@ function errText(e) {
   if (s.indexOf('invalid_code') >= 0) return '올바른 코드를 입력하세요.';
   if (s.indexOf('name_required') >= 0) return '이름을 입력하세요.';
   if (s.indexOf('invalid_name') >= 0) return '이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.';
+  if (s.indexOf('room_not_found') >= 0) return '존재하지 않는 방 코드입니다.';
+  if (s.indexOf('room_owner_only') >= 0) return '방장만 할 수 있는 작업입니다.';
   return '처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.';
 }
 async function doAdd() {
@@ -685,12 +751,12 @@ async function removeFriend(c) {
   reload();
 }
 
-/* ---------- 오픈채팅 ---------- */
+/* ---------- 방 관리 ---------- */
 function rsay(t) { $('rst').textContent = t || ''; }
 async function doCreateOpenRoom() {
   var name = $('rn').value.trim();
   if (!name) return rsay('오픈채팅방 이름을 입력하세요.');
-  $('rmkb').disabled = true; rsay('만드는 중…');
+  $('rmkb').disabled = true; rsay('오픈채팅방 만드는 중…');
   var r = await sb.rpc('create_open_room', { p_name: name });
   $('rmkb').disabled = false;
   if (r.error) {
@@ -701,10 +767,42 @@ async function doCreateOpenRoom() {
   }
   var room = Array.isArray(r.data) ? r.data[0] : r.data;
   $('rn').value = '';
-  rsay('오픈채팅방을 만들었습니다.');
   $('roomp').hidden = true;
   await reload();
   openChat(room.id);
+  hint('오픈채팅방을 만들었습니다.');
+}
+async function doCreateCodeRoom() {
+  var name = $('grn').value.trim();
+  if (!name) return rsay('코드방 이름을 입력하세요.');
+  $('grmb').disabled = true; rsay('6자리 코드방 만드는 중…');
+  var r = await sb.rpc('create_code_room', { p_name: name });
+  $('grmb').disabled = false;
+  if (r.error) return rsay(errText(r.error));
+  var room = Array.isArray(r.data) ? r.data[0] : r.data;
+  $('grn').value = '';
+  $('roomp').hidden = true;
+  await reload();
+  openChat(room.id);
+  hint('방 코드 ' + room.room_code + '가 발급됐습니다. 참여자에게 공유하세요.');
+}
+async function joinCodeRoom() {
+  var code = $('rc').value.trim();
+  if (!/^\d{6}$/.test(code)) return rsay('방 코드 6자리를 입력하세요.');
+  $('rcb').disabled = true; rsay('코드 확인 중…');
+  var r = await sb.rpc('join_code_room', { p_code: code });
+  $('rcb').disabled = false;
+  if (r.error) {
+    var m = msgOf(r.error);
+    if (m.indexOf('room_lookup_rate_limited') >= 0) return rsay('코드 입력을 너무 많이 시도했습니다. 10분 후 다시 시도하세요.');
+    if (m.indexOf('room_not_found') >= 0) return rsay('존재하지 않는 방 코드입니다.');
+    if (m.indexOf('invalid_room_code') >= 0) return rsay('방 코드는 숫자 6자리입니다.');
+    return rsay(errText(r.error));
+  }
+  if (!r.data || !r.data.ok) return rsay('방에 참가하지 못했습니다.');
+  $('rc').value = ''; $('roomp').hidden = true;
+  await reload();
+  openChat(r.data.id);
 }
 async function joinOpenRoom(id) {
   var r = await sb.rpc('join_open_room', { p_conv: id });
@@ -713,14 +811,70 @@ async function joinOpenRoom(id) {
   await reload();
   openChat(id);
 }
-async function leaveOpenRoom() {
+async function editMyName() {
+  var next = prompt('새 이름을 입력하세요. 한글과 숫자만, 최대 12자입니다.', me.name);
+  if (next === null) return;
+  next = next.trim();
+  if (!/^[가-힣0-9]{1,12}$/.test(next)) {
+    hint('이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.');
+    return;
+  }
+  var r = await sb.rpc('update_my_name', { p_name: next });
+  if (r.error) { hint('이름을 수정하지 못했습니다.'); return; }
+  me.name = next;
+  lset('pm_me', me);
+  $('myn').textContent = next;
+  convs.forEach(function (c) {
+    var mine = c.members.get(me.id);
+    if (mine) mine.name = next;
+  });
+  refreshNames(); updateHeader(); renderPanel(); renderLists();
+  await reload();
+  hint('이름을 수정했습니다.');
+}
+async function renameRoom() {
   var c = convs.get(active);
-  if (!c || c.type !== 'open') return;
-  if (!confirm('"' + c.name + '" 오픈채팅방에서 나갈까요?')) return;
-  var r = await sb.rpc('leave_open_room', { p_conv: c.id });
-  if (r.error) { hint('나가지 못했습니다. 다시 시도하세요.'); return; }
+  if (!c || c.type === 'direct' || c.owner !== me.id) return;
+  var next = prompt('새 방 이름을 입력하세요. (최대 30자)', c.name);
+  if (next === null) return;
+  next = next.trim();
+  if (!next || next.length > 30) { hint('방 이름은 1~30자로 입력하세요.'); return; }
+  var r = await sb.rpc('rename_room', { p_conv: c.id, p_name: next });
+  if (r.error) { hint('방 이름을 수정하지 못했습니다.'); return; }
+  c.name = next; updateHeader(); renderLists(); renderOpenRooms();
+  await reload();
+  hint('방 이름을 수정했습니다.');
+}
+async function roomAction() {
+  var c = convs.get(active);
+  if (!c || c.type === 'direct') return;
+  if (c.owner !== me.id) {
+    if (!confirm('"' + c.name + '" 방에서 나갈까요?')) return;
+    var leave = await sb.rpc('leave_room', { p_conv: c.id });
+    if (leave.error) { hint('방에서 나가지 못했습니다.'); return; }
+    showList(); await reload(); return;
+  }
+
+  if (!confirm('"' + c.name + '" 방과 모든 메시지를 삭제합니다. 계속할까요?')) return;
+  var phrase = prompt('방을 삭제하려면 아래 문구를 그대로 입력하세요.\n\n삭제하겠습니다');
+  if (phrase === null) return;
+  if (phrase !== '삭제하겠습니다') { hint('확인 문구가 일치하지 않아 삭제하지 않았습니다.'); return; }
+
+  // 방 이미지도 먼저 Storage API로 삭제한다. 실패하면 대화방 삭제를 진행하지 않는다.
+  var listing = await sb.storage.from(BUCKET).list(c.id, { limit: 1000 });
+  if (listing.error) { hint('방 사진 목록을 확인하지 못해 삭제하지 않았습니다.'); return; }
+  var paths = (listing.data || []).filter(function (x) { return x.name; })
+    .map(function (x) { return c.id + '/' + x.name; });
+  if (paths.length) {
+    var removed = await sb.storage.from(BUCKET).remove(paths);
+    if (removed.error) { hint('방 사진 삭제에 실패해 방을 삭제하지 않았습니다.'); return; }
+  }
+
+  var r = await sb.rpc('delete_room', { p_conv: c.id, p_confirmation: phrase });
+  if (r.error) { hint('방을 삭제하지 못했습니다.'); return; }
   showList();
   await reload();
+  hint('방과 메시지를 삭제했습니다.');
 }
 
 /* ---------- 푸시 알림 (권한 → Service Worker → Push 구독 → 서버 저장) ---------- */
@@ -964,13 +1118,15 @@ function copyText(text, b) {
 }
 function resetState() {
   if (chan) { try { sb.removeChannel(chan); } catch (e) {} chan = null; }
+  if (presenceChan) { try { sb.removeChannel(presenceChan); } catch (e) {} presenceChan = null; }
+  onlineUsers = new Set();
   clearTimeout(rlT); clearTimeout(pendingRead); pendingRead = null;
   convs = new Map(); openRooms = []; reqs = []; shown = new Map(); outbox = new Map(); urls = new Map(); queued = [];
   active = null; me = null; loadTok++; firstLoading = false; pendingOpen = null; panelOpen = false;
   msEl.replaceChildren();
-  $('fl').replaceChildren(); $('rl').replaceChildren(); $('rql').replaceChildren();
+  $('fl').replaceChildren(); $('rl').replaceChildren(); $('cl').replaceChildren(); $('rql').replaceChildren();
   vapidKey = ''; lastErr = ''; nbState = ''; notified = new Set(); $('toast').hidden = true;
-  document.title = '서대전챗';
+  document.title = '서고챗';
 }
 async function logout() {
   if (!confirm('로그아웃할까요?\n\n이 계정은 익명 계정이라 로그아웃하면 다시 로그인할 수 없습니다. 친구·방·대화 기록에 더 이상 접근할 수 없게 됩니다.')) return;
@@ -1031,6 +1187,7 @@ function enter() {
   if (c && UUID_RE.test(c)) pendingOpen = c;
   if (c) history.replaceState(null, '', location.pathname);
   startRealtime();
+  startPresence();
   reload();
   initPush();
 }
@@ -1074,32 +1231,19 @@ function init() {
   msEl = $('ms'); inp = $('inp');
 
   var nameInput = $('nm');
-  var nameComposing = false;
-  function cleanNameInput(input) {
-    input.value = input.value.replace(/[^가-힣0-9]/g, '').slice(0, 12);
-  }
-  nameInput.addEventListener('compositionstart', function () {
-    nameComposing = true;
-  });
-  nameInput.addEventListener('compositionend', function () {
-    nameComposing = false;
-    cleanNameInput(this);
-  });
-  nameInput.addEventListener('input', function (e) {
-    // 한글 IME 조합 중에는 중간 자모를 지우지 않는다.
-    if (nameComposing || e.isComposing) return;
-    cleanNameInput(this);
-  });
+  // 영문 키보드 상태에서도 입력은 그대로 두고, 시작 버튼을 눌렀을 때 한글 규칙을 검사한다.
   $('rf').addEventListener('submit', function (e) {
     e.preventDefault();
-    var name = nameInput.value;
+    var name = nameInput.value.trim();
     if (!/^[가-힣0-9]{1,12}$/.test(name)) {
-      $('rs').textContent = '이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.';
+      $('rs').textContent = '한글과 숫자만 사용할 수 있습니다. 한글 입력 상태를 확인하세요.';
+      nameInput.focus();
       return;
     }
     register(name);
   });
   $('cp').addEventListener('click', function () { copyText(me.code, $('cp')); });
+  $('nameb').addEventListener('click', editMyName);
   $('lo').addEventListener('click', logout);
   $('nb').addEventListener('click', onNbClick);
   $('addb').addEventListener('click', function () {
@@ -1113,12 +1257,16 @@ function init() {
   $('ac').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 4); });
   $('addp').addEventListener('submit', function (e) { e.preventDefault(); doAdd(); });
   $('rmk').addEventListener('submit', function (e) { e.preventDefault(); doCreateOpenRoom(); });
+  $('gmk').addEventListener('submit', function (e) { e.preventDefault(); doCreateCodeRoom(); });
+  $('cjn').addEventListener('submit', function (e) { e.preventDefault(); joinCodeRoom(); });
+  $('rc').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); });
+  $('rnm').addEventListener('click', renameRoom);
   $('pb').addEventListener('click', function () {
     var p = $('pl'); panelOpen = p.hidden;
     p.hidden = !panelOpen;
     if (panelOpen) renderPanel();
   });
-  $('lv').addEventListener('click', leaveOpenRoom);
+  $('lv').addEventListener('click', roomAction);
   $('at').addEventListener('click', function () { $('fi').click(); });
   $('fi').addEventListener('change', function () {
     var f = this.files && this.files[0];
