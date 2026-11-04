@@ -169,3 +169,17 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
   .reply-quote-text{max-width:190px}
   .message-actions button{padding:2px 6px}
 }
+
+/* GIF 및 자동 링크 */
+.message-link{color:#2563eb;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;overflow-wrap:anywhere}
+.me .message-link{color:#dbeafe}
+.b.img img{max-width:260px;max-height:260px}
+
+/* 친구 추가 및 방 만들기/추가 분리 */
+.code #addb{margin-left:auto;white-space:nowrap;flex:none;padding:2px 7px;font-size:12px;color:#2563eb}
+.acts #roomb,.acts #joinb{font-weight:600}
+#joinp{padding:10px 14px;border-bottom:1px solid #e3e5e8}
+#joinp .room-form{display:flex;flex-direction:column;gap:6px}
+#joinp .room-form input{width:100%;font-size:15px}
+#joinp .room-form button{width:100%;font-size:13px}
+#jst{margin-top:6px;font-size:12px;color:#6b7280}
