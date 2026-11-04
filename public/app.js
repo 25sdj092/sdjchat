@@ -7,7 +7,7 @@ var PAGE = 30;                   // 한 번에 불러오는 메시지 수
 var DOM_CAP = 300;               // 화면에 유지하는 최대 말풍선 수
 var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
-var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at,reply_to,reply_sender_id,reply_preview,mention_user_ids';
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -439,15 +439,39 @@ async function toggleReaction(en, emoji) {
 }
 function renderMessageText(target, m, c) {
   var content = String(m.content || ''), ids = new Set(m.mention_user_ids || []);
-  var re = /@([가-힣0-9]{1,12})/g, last = 0, match;
+  var re = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|@[가-힣0-9]{1,12})/gi;
+  var last = 0, match;
   while ((match = re.exec(content))) {
-    var member = null;
-    if (c && ids.size) c.members.forEach(function (x) {
-      if (!member && x.name === match[1] && ids.has(x.id)) member = x;
-    });
+    var token = match[0];
     target.appendChild(document.createTextNode(content.slice(last, match.index)));
-    target.appendChild(member ? el('span', 'mention', match[0]) : document.createTextNode(match[0]));
-    last = re.lastIndex;
+    if (/^(https?:\/\/|www\.)/i.test(token)) {
+      var display = token, suffix = '';
+      while (/[.,!?;:)\]}，。！？、]$/.test(display)) {
+        suffix = display.slice(-1) + suffix;
+        display = display.slice(0, -1);
+      }
+      try {
+        var parsed = new URL(/^www\./i.test(display) ? 'https://' + display : display);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          var link = el('a', 'message-link', display);
+          link.href = parsed.href;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.referrerPolicy = 'no-referrer';
+          target.appendChild(link);
+        } else target.appendChild(document.createTextNode(display));
+      } catch (e) {
+        target.appendChild(document.createTextNode(display));
+      }
+      if (suffix) target.appendChild(document.createTextNode(suffix));
+    } else {
+      var member = null;
+      if (c && ids.size) c.members.forEach(function (x) {
+        if (!member && !x.left && x.name === token.slice(1) && ids.has(x.id)) member = x;
+      });
+      target.appendChild(member ? el('span', 'mention', token) : document.createTextNode(token));
+    }
+    last = match.index + token.length;
   }
   target.appendChild(document.createTextNode(content.slice(last)));
 }
@@ -700,7 +724,7 @@ function retryFailed() {
 /* 사진 */
 function sendImage(f) {
   if (!active) return;
-  if (!EXT[f.type]) return hint('JPEG, PNG, WebP 사진만 보낼 수 있습니다.');
+  if (!EXT[f.type]) return hint('JPEG, PNG, WebP, GIF 파일만 보낼 수 있습니다.');
   if (f.size > MAX_IMG) return hint('사진은 10MB 이하만 보낼 수 있습니다. (' + (f.size / 1048576).toFixed(1) + 'MB)');
   if (f.size < 1) return hint('빈 파일입니다.');
   var m = newMsg('image');
@@ -941,6 +965,7 @@ async function removeFriend(c) {
 
 /* ---------- 방 관리 ---------- */
 function rsay(t) { $('rst').textContent = t || ''; }
+function jsay(t) { $('jst').textContent = t || ''; }
 async function doCreateOpenRoom() {
   var name = $('rn').value.trim();
   if (!name) return rsay('오픈채팅방 이름을 입력하세요.');
@@ -976,19 +1001,19 @@ async function doCreateCodeRoom() {
 }
 async function joinCodeRoom() {
   var code = $('rc').value.trim();
-  if (!/^\d{6}$/.test(code)) return rsay('방 코드 6자리를 입력하세요.');
-  $('rcb').disabled = true; rsay('코드 확인 중…');
+  if (!/^\d{6}$/.test(code)) return jsay('방 코드 6자리를 입력하세요.');
+  $('rcb').disabled = true; jsay('코드 확인 중…');
   var r = await sb.rpc('join_code_room', { p_code: code });
   $('rcb').disabled = false;
   if (r.error) {
     var m = msgOf(r.error);
-    if (m.indexOf('room_lookup_rate_limited') >= 0) return rsay('코드 입력을 너무 많이 시도했습니다. 10분 후 다시 시도하세요.');
-    if (m.indexOf('room_not_found') >= 0) return rsay('존재하지 않는 방 코드입니다.');
-    if (m.indexOf('invalid_room_code') >= 0) return rsay('방 코드는 숫자 6자리입니다.');
-    return rsay(errText(r.error));
+    if (m.indexOf('room_lookup_rate_limited') >= 0) return jsay('코드 입력을 너무 많이 시도했습니다. 10분 후 다시 시도하세요.');
+    if (m.indexOf('room_not_found') >= 0) return jsay('존재하지 않는 방 코드입니다.');
+    if (m.indexOf('invalid_room_code') >= 0) return jsay('방 코드는 숫자 6자리입니다.');
+    return jsay(errText(r.error));
   }
-  if (!r.data || !r.data.ok) return rsay('방에 참가하지 못했습니다.');
-  $('rc').value = ''; $('roomp').hidden = true;
+  if (!r.data || !r.data.ok) return jsay('방에 참가하지 못했습니다.');
+  $('rc').value = ''; $('joinp').hidden = true;
   await reload();
   openChat(r.data.id);
 }
@@ -1458,13 +1483,18 @@ function init() {
   $('nb').addEventListener('click', onNbClick);
   $('addb').addEventListener('click', function () {
     var p = $('addp'); p.hidden = !p.hidden;
-    if (!p.hidden) { $('roomp').hidden = true; say(''); $('ac').focus(); }
+    if (!p.hidden) { $('roomp').hidden = true; $('joinp').hidden = true; say(''); $('ac').focus(); }
   });
   $('roomb').addEventListener('click', function () {
     var p = $('roomp'); p.hidden = !p.hidden;
-    if (!p.hidden) { $('addp').hidden = true; rsay(''); $('rn').focus(); }
+    if (!p.hidden) { $('addp').hidden = true; $('joinp').hidden = true; rsay(''); $('rn').focus(); }
+  });
+  $('joinb').addEventListener('click', function () {
+    var p = $('joinp'); p.hidden = !p.hidden;
+    if (!p.hidden) { $('addp').hidden = true; $('roomp').hidden = true; jsay(''); $('rc').focus(); }
   });
   $('roomClose').addEventListener('click', function () { $('roomp').hidden = true; });
+  $('joinClose').addEventListener('click', function () { $('joinp').hidden = true; });
   $('ac').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 4); });
   $('addp').addEventListener('submit', function (e) { e.preventDefault(); doAdd(); });
   $('rmk').addEventListener('submit', function (e) { e.preventDefault(); doCreateOpenRoom(); });
