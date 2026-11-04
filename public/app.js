@@ -8,7 +8,7 @@ var DOM_CAP = 300;               // 화면에 유지하는 최대 말풍선 수
 var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
 var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at';
+var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at,reply_to,reply_sender_id,reply_preview,mention_user_ids';
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 var $ = function (id) { return document.getElementById(id); };
@@ -31,6 +31,8 @@ var urls = new Map();            // storage 경로 -> {u, exp} (Signed URL 캐�
 var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld = false, stick = true;
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
+var reactionsByMessage = new Map(), replyTarget = null;
+var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉'];
 
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -311,6 +313,8 @@ function openChat(id) {
   $('empty').hidden = true;
   $('chat').hidden = false;
   $('pl').hidden = true;
+  clearReplyInput(); hideMentionMenu();
+  reactionsByMessage = new Map();
   var isRoom = c.type === 'open' || c.type === 'group';
   $('pb').hidden = !isRoom;
   $('lv').hidden = !isRoom;
@@ -335,6 +339,7 @@ async function loadLatest(id, tok) {
   var full = r.data.length === PAGE;
   var arr = r.data.reverse();
   await signMany(arr);
+  await loadReactions(arr);
   if (tok !== loadTok) return;
   var frag = document.createDocumentFragment();
   arr.forEach(function (m) { if (!shown.has(m.id)) frag.appendChild(addEntry(m)); });
@@ -355,7 +360,7 @@ async function loadOlder() {
   loadingOld = true;
   var id = active, tok = loadTok;
   var r = await sb.from('messages').select(COLS).eq('conversation_id', id).lt('seq', fs).order('seq', { ascending: false }).limit(PAGE);
-  if (!r.error) await signMany(r.data);
+  if (!r.error) { await signMany(r.data); await loadReactions(r.data); }
   loadingOld = false;
   if (tok !== loadTok) return;
   if (r.error) { hint('이전 메시지를 불러오지 못했습니다.'); return; }
@@ -377,13 +382,148 @@ function unreadOf(m) {            // 이 메시지를 아직 읽지 않은 참�
   c.members.forEach(function (mm) { if (!mm.left && mm.id !== m.sender_id && mm.seq < m.seq) n++; });
   return n;
 }
+function loadReactions(messages) {
+  var ids = (messages || []).map(function (m) { return m.id; }).filter(Boolean);
+  if (!ids.length) return Promise.resolve();
+  return sb.from('message_reactions').select('message_id,user_id,emoji').in('message_id', ids)
+    .then(function (res) {
+      if (res.error) return;
+      ids.forEach(function (id) { reactionsByMessage.set(id, []); });
+      (res.data || []).forEach(function (x) {
+        var list = reactionsByMessage.get(x.message_id) || [];
+        list.push(x);
+        reactionsByMessage.set(x.message_id, list);
+      });
+      ids.forEach(function (id) {
+        var en = shown.get(id);
+        if (en) renderReactionBar(en);
+      });
+    });
+}
+function loadReactionForMessage(id) {
+  if (!id) return Promise.resolve();
+  return sb.from('message_reactions').select('message_id,user_id,emoji').eq('message_id', id)
+    .then(function (res) {
+      if (res.error) return;
+      reactionsByMessage.set(id, res.data || []);
+      var en = shown.get(id);
+      if (en) renderReactionBar(en);
+    });
+}
+function renderReactionBar(en) {
+  if (!en || !en.reactionRow) return;
+  var list = reactionsByMessage.get(en.m.id) || [];
+  en.reactionRow.replaceChildren();
+  REACTION_EMOJIS.forEach(function (emoji) {
+    var matches = list.filter(function (x) { return x.emoji === emoji; });
+    if (!matches.length) return;
+    var own = matches.some(function (x) { return x.user_id === me.id; });
+    var b = el('button', 'reaction-chip' + (own ? ' selected' : ''), emoji + ' ' + matches.length);
+    b.type = 'button'; b.title = emoji + ' 반응';
+    b.addEventListener('click', function () { toggleReaction(en, emoji); });
+    en.reactionRow.appendChild(b);
+  });
+  en.reactionRow.hidden = !en.reactionRow.childElementCount;
+}
+async function toggleReaction(en, emoji) {
+  if (!en || en.reactionBusy || !active) return;
+  en.reactionBusy = true;
+  var m = en.m, current = reactionsByMessage.get(m.id) || [];
+  var exists = current.some(function (x) { return x.user_id === me.id && x.emoji === emoji; });
+  var result = exists
+    ? await sb.from('message_reactions').delete().eq('message_id', m.id).eq('user_id', me.id).eq('emoji', emoji)
+    : await sb.from('message_reactions').insert({ conversation_id: m.conversation_id, message_id: m.id, user_id: me.id, emoji: emoji });
+  en.reactionBusy = false;
+  if (result.error && result.error.code !== '23505') { hint('이모지 반응을 저장하지 못했습니다.'); return; }
+  await loadReactionForMessage(m.id);
+}
+function renderMessageText(target, m, c) {
+  var content = String(m.content || ''), ids = new Set(m.mention_user_ids || []);
+  var re = /@([가-힣0-9]{1,12})/g, last = 0, match;
+  while ((match = re.exec(content))) {
+    var member = null;
+    if (c && ids.size) c.members.forEach(function (x) {
+      if (!member && x.name === match[1] && ids.has(x.id)) member = x;
+    });
+    target.appendChild(document.createTextNode(content.slice(last, match.index)));
+    target.appendChild(member ? el('span', 'mention', match[0]) : document.createTextNode(match[0]));
+    last = re.lastIndex;
+  }
+  target.appendChild(document.createTextNode(content.slice(last)));
+}
+function setReplyInput(m) {
+  if (!m || !m.seq) return hint('전송이 완료된 메시지에만 답글을 달 수 있습니다.');
+  replyTarget = m;
+  var c = convs.get(m.conversation_id);
+  var preview = m.message_type === 'image' ? '사진' : String(m.content || '').replace(/\\s+/g, ' ').trim();
+  $('replyText').textContent = nameOf(c, m.sender_id) + ': ' + preview.slice(0, 90);
+  $('replying').hidden = false;
+  hideMentionMenu();
+  inp.focus();
+}
+function clearReplyInput() {
+  replyTarget = null;
+  var box = $('replying'), label = $('replyText');
+  if (box) box.hidden = true;
+  if (label) label.textContent = '';
+}
+function hideMentionMenu() {
+  var menu = $('mentionMenu');
+  if (menu) menu.hidden = true;
+}
+function mentionsIn(text) {
+  var c = convs.get(active), ids = [], seen = new Set();
+  if (!c) return ids;
+  var re = /@([가-힣0-9]{1,12})/g, match;
+  while ((match = re.exec(text))) {
+    c.members.forEach(function (m) {
+      if (!m.left && m.id !== me.id && m.name === match[1] && !seen.has(m.id)) {
+        seen.add(m.id); ids.push(m.id);
+      }
+    });
+  }
+  return ids;
+}
+function updateMentionMenu() {
+  var menu = $('mentionMenu'), c = convs.get(active);
+  if (!menu || !c) { hideMentionMenu(); return; }
+  var cursor = inp.selectionStart || 0, before = inp.value.slice(0, cursor);
+  var match = /(^|\\s)@([가-힣0-9]{0,12})$/.exec(before);
+  if (!match) { hideMentionMenu(); return; }
+  var query = match[2], candidates = activeMembers(c).filter(function (m) {
+    return m.id !== me.id && m.name.indexOf(query) === 0;
+  }).slice(0, 6);
+  if (!candidates.length) { hideMentionMenu(); return; }
+  menu.replaceChildren();
+  candidates.forEach(function (member) {
+    var option = el('button', 'mention-option', '@' + member.name);
+    option.type = 'button';
+    option.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    option.addEventListener('click', function () {
+      var start = match.index + match[1].length;
+      inp.value = inp.value.slice(0, start) + '@' + member.name + ' ' + inp.value.slice(cursor);
+      var next = start + member.name.length + 2;
+      inp.focus(); inp.setSelectionRange(next, next); fitInput(); hideMentionMenu();
+    });
+    menu.appendChild(option);
+  });
+  menu.hidden = false;
+}
 function addEntry(m) {
   var c = convs.get(m.conversation_id);
   var mine = m.sender_id === me.id;
   var d = el('div', 'm' + (mine ? ' me' : ''));
   d.dataset.id = m.id;
   var col = el('div', 'col'), sn = null, pg = null;
-  if (!mine && c && (c.type === 'open' || c.type === 'group')) { sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn); }
+  if (!mine && c && (c.type === 'open' || c.type === 'group')) {
+    sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn);
+  }
+  if (m.reply_to && m.reply_preview) {
+    var quote = el('div', 'reply-quote');
+    quote.appendChild(el('span', 'reply-quote-name', nameOf(c, m.reply_sender_id)));
+    quote.appendChild(el('span', 'reply-quote-text', m.reply_preview));
+    col.appendChild(quote);
+  }
   var b = el('div', 'b');
   if (m.message_type === 'image') {
     b.className = 'b img';
@@ -393,20 +533,46 @@ function addEntry(m) {
     im.addEventListener('click', function () { openLb(im.currentSrc || im.src); });
     im.addEventListener('error', function () {
       if (im._retried || m._blob) return;
-      im._retried = true; urls.delete(m.storage_path); setSrc(im, m);     // 만료된 Signed URL 이면 새로 발급
+      im._retried = true; urls.delete(m.storage_path); setSrc(im, m);
     });
     setSrc(im, m);
     b.appendChild(im);
     if (m._st === 'sending') { pg = el('div', 'pg'); b.appendChild(pg); }
-  } else b.textContent = m.content;
+  } else renderMessageText(b, m, c);
   col.appendChild(b);
+
+  var actions = el('div', 'message-actions');
+  var replyBtn = el('button', 'reply-btn', '답글');
+  var reactBtn = el('button', 'react-btn', '반응 +');
+  replyBtn.type = 'button'; replyBtn.disabled = !m.seq;
+  reactBtn.type = 'button';
+  replyBtn.addEventListener('click', function () { setReplyInput(m); });
+  var picker = el('div', 'emoji-picker');
+  picker.hidden = true;
+  REACTION_EMOJIS.forEach(function (emoji) {
+    var eb = el('button', null, emoji);
+    eb.type = 'button'; eb.title = emoji;
+    eb.addEventListener('click', function () {
+      picker.hidden = true;
+      toggleReaction(en, emoji);
+    });
+    picker.appendChild(eb);
+  });
+  reactBtn.addEventListener('click', function () { picker.hidden = !picker.hidden; });
+  actions.appendChild(replyBtn); actions.appendChild(reactBtn); actions.appendChild(picker);
+  col.appendChild(actions);
+  var reactionRow = el('div', 'reaction-row');
+  reactionRow.hidden = true;
+  col.appendChild(reactionRow);
+
   var meta = el('div', 'meta'), u = el('span', 'u'), rt = el('button', 'rt', '재시도'), t = el('span', 't');
   rt.type = 'button'; rt.hidden = true;
   meta.appendChild(u); meta.appendChild(rt); meta.appendChild(t);
   d.appendChild(col); d.appendChild(meta);
-  var en = { m: m, el: d, sn: sn, u: u, rt: rt, t: t, pg: pg };
+  var en = { m: m, el: d, sn: sn, u: u, rt: rt, t: t, pg: pg, reactionRow: reactionRow, picker: picker, replyBtn: replyBtn };
   rt.addEventListener('click', function () { retry(en.m); });
   shown.set(m.id, en);
+  renderReactionBar(en);
   paint(en);
   return d;
 }
@@ -414,6 +580,7 @@ function paint(en) {
   var m = en.m, st = m._st || 'sent';
   en.t.textContent = fmt(m.created_at);
   en.rt.hidden = st !== 'failed';
+  if (en.replyBtn) en.replyBtn.disabled = !m.seq;
   if (m.seq != null) en.el.dataset.seq = m.seq;
   if (st === 'sending') { en.u.className = 'u s'; en.u.textContent = '전송 중…'; }
   else if (st === 'failed') { en.u.className = 'u f'; en.u.textContent = '전송 실패'; }
@@ -482,8 +649,12 @@ function fitInput() {
   inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
 }
 function newMsg(type) {
+  var target = replyTarget, c = convs.get(active);
+  var replyPreview = target ? (target.message_type === 'image' ? '사진' : String(target.content || '').replace(/\\s+/g, ' ').trim().slice(0, 90)) : null;
   return { id: uuid(), seq: null, conversation_id: active, sender_id: me.id, content: '', message_type: type,
-           storage_path: null, mime_type: null, file_size: null, created_at: new Date().toISOString(), _st: 'sending' };
+           storage_path: null, mime_type: null, file_size: null,
+           reply_to: target ? target.id : null, reply_sender_id: target ? target.sender_id : null,
+           reply_preview: replyPreview, mention_user_ids: [], created_at: new Date().toISOString(), _st: 'sending' };
 }
 function sendText() {
   if (!active) return;
@@ -491,7 +662,8 @@ function sendText() {
   if (!text) return;
   var m = newMsg('text');
   m.content = text.slice(0, MAXLEN);
-  inp.value = ''; fitInput(); hint('');
+  m.mention_user_ids = mentionsIn(m.content);
+  inp.value = ''; fitInput(); hint(''); hideMentionMenu(); clearReplyInput();
   appendMsg(m);
   post(m);
 }
@@ -500,16 +672,20 @@ async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전�
   outbox.set(m.id, m);
   m._st = 'sending';
   var en = shown.get(m.id); if (en) paint(en);
-  var row = { id: m.id, conversation_id: m.conversation_id, content: m.content, message_type: m.message_type };
+  var row = { id: m.id, conversation_id: m.conversation_id, content: m.content, message_type: m.message_type,
+    reply_to: m.reply_to || null, mention_user_ids: m.mention_user_ids || [] };
   if (m.message_type === 'image') { row.storage_path = m.storage_path; row.mime_type = m.mime_type; row.file_size = m.file_size; }
-  var r = await sb.from('messages').insert(row).select('seq,created_at').single();
-  if (r.error && r.error.code === '23505') r = await sb.from('messages').select('seq,created_at').eq('id', m.id).single();   // 이미 저장된 메시지(재시도)
+  var returned = 'seq,created_at,reply_sender_id,reply_preview,mention_user_ids';
+  var r = await sb.from('messages').insert(row).select(returned).single();
+  if (r.error && r.error.code === '23505') r = await sb.from('messages').select(returned).eq('id', m.id).single();   // 이미 저장된 메시지(재시도)
   if (r.error) {
     m._st = 'failed';
     en = shown.get(m.id); if (en) paint(en);
     return;
   }
   m.seq = r.data.seq; m.created_at = r.data.created_at; m._st = 'sent'; m._file = null;
+  m.reply_sender_id = r.data.reply_sender_id; m.reply_preview = r.data.reply_preview;
+  m.mention_user_ids = r.data.mention_user_ids || m.mention_user_ids || [];
   outbox.delete(m.id);
   kickPush(m.id);
   en = shown.get(m.id); if (en) paint(en);
@@ -530,7 +706,7 @@ function sendImage(f) {
   var m = newMsg('image');
   m.storage_path = active + '/' + uuid() + '.' + EXT[f.type];
   m.mime_type = f.type; m.file_size = f.size; m._file = f; m._blob = URL.createObjectURL(f); m._p = 0;
-  hint('');
+  clearReplyInput(); hideMentionMenu(); hint('');
   appendMsg(m);
   upload(m);
 }
@@ -614,6 +790,7 @@ function startRealtime() {
   var seen = false;
   chan = sb.channel('app-' + me.id)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, function (p) { onMsg(p.new); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, onReactionChange)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversation_members' }, function (p) { onMember(p.new); })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_members' }, scheduleReload)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'friendships' }, scheduleReload)
@@ -664,15 +841,25 @@ function onMsg(m) {
   if (active === m.conversation_id) {
     var en = shown.get(m.id);
     if (en) {                                          // 내가 보낸 메시지가 돌아온 경우
-      if (en.m._st !== 'sent') { en.m.seq = m.seq; en.m.created_at = m.created_at; en.m._st = 'sent'; outbox.delete(m.id); paint(en); }
+      if (en.m._st !== 'sent') {
+        en.m.seq = m.seq; en.m.created_at = m.created_at; en.m._st = 'sent';
+        en.m.reply_sender_id = m.reply_sender_id; en.m.reply_preview = m.reply_preview;
+        en.m.mention_user_ids = m.mention_user_ids || en.m.mention_user_ids || [];
+        outbox.delete(m.id); paint(en);
+      }
     } else {
       if (!c.members.has(m.sender_id)) scheduleReload();   // 처음 보는 발신자
-      signMany([m]).then(function () { appendMsg(m); });
+      signMany([m]).then(function () { return loadReactions([m]); }).then(function () { appendMsg(m); });
     }
   }
   if (mine) return;
   if (viewing(m.conversation_id)) scheduleRead();          // 지금 보고 있는 방: 알림 없이 읽음 처리
   else { c.unread++; setBadge(c); notifyIncoming(c, m); }
+}
+function onReactionChange(payload) {
+  var row = payload && (payload.new || payload.old);
+  if (!row || row.conversation_id !== active || !shown.has(row.message_id)) return;
+  loadReactionForMessage(row.message_id);
 }
 function onMember(r) {
   if (!r) return;
@@ -695,6 +882,7 @@ async function fillGap() {        // 연결이 끊겼던 동안 놓친 메시지
     var r = await sb.from('messages').select(COLS).eq('conversation_id', id).gt('seq', Number(e.dataset.seq)).order('seq', { ascending: true }).limit(100);
     if (tok !== loadTok || r.error) return;
     await signMany(r.data);
+    await loadReactions(r.data);
     if (tok !== loadTok) return;
     r.data.forEach(appendMsg);
     if (r.data.length < 100) break;
@@ -812,6 +1000,12 @@ async function joinOpenRoom(id) {
   openChat(id);
 }
 async function editMyName() {
+  var availableAt = me.nameChangedAt ? new Date(me.nameChangedAt).getTime() + 7 * 24 * 60 * 60 * 1000 : 0;
+  if (availableAt > Date.now()) {
+    hint(new Date(availableAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) + ' 이후 이름을 다시 수정할 수 있습니다.');
+    return;
+  }
+  if (!confirm('이름은 7일에 한 번만 수정할 수 있습니다. 지금 수정하면 변경한 시점부터 7일 후에 다시 수정할 수 있습니다.\\n계속하시겠습니까?')) return;
   var next = prompt('새 이름을 입력하세요. 한글과 숫자만, 최대 12자입니다.', me.name);
   if (next === null) return;
   next = next.trim();
@@ -819,9 +1013,16 @@ async function editMyName() {
     hint('이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.');
     return;
   }
+  if (next === me.name) return hint('현재 사용 중인 이름과 같습니다.');
   var r = await sb.rpc('update_my_name', { p_name: next });
-  if (r.error) { hint('이름을 수정하지 못했습니다.'); return; }
-  me.name = next;
+  if (r.error) {
+    var nameError = msgOf(r.error);
+    if (nameError.indexOf('username_taken') >= 0) hint('이미 사용 중인 이름입니다. 다른 이름을 입력하세요.');
+    else if (nameError.indexOf('name_change_cooldown:') >= 0) hint(nameError.split('name_change_cooldown:')[1].trim() + ' 이후 이름을 다시 수정할 수 있습니다.');
+    else hint('이름을 수정하지 못했습니다.');
+    return;
+  }
+  me.name = next; me.nameChangedAt = r.data && r.data.username_changed_at || new Date().toISOString();
   lset('pm_me', me);
   $('myn').textContent = next;
   convs.forEach(function (c) {
@@ -1106,8 +1307,11 @@ function openById(id) {
   if (convs.has(id)) openChat(id); else { pendingOpen = id; scheduleReload(); }
 }
 function copyText(text, b) {
-  var old = b.textContent;
-  var ok = function () { b.textContent = '복사됨'; setTimeout(function () { b.textContent = old; }, 1200); };
+  var old = b ? b.textContent : '';
+  var ok = function () {
+    if (b) { b.textContent = '복사됨'; setTimeout(function () { b.textContent = old; }, 1200); }
+    else hint('내 코드가 복사되었습니다.');
+  };
   var fb = function () {
     var t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select();
     try { document.execCommand('copy'); ok(); } catch (e) {}
@@ -1123,6 +1327,7 @@ function resetState() {
   clearTimeout(rlT); clearTimeout(pendingRead); pendingRead = null;
   convs = new Map(); openRooms = []; reqs = []; shown = new Map(); outbox = new Map(); urls = new Map(); queued = [];
   active = null; me = null; loadTok++; firstLoading = false; pendingOpen = null; panelOpen = false;
+  reactionsByMessage = new Map(); clearReplyInput(); hideMentionMenu();
   msEl.replaceChildren();
   $('fl').replaceChildren(); $('rl').replaceChildren(); $('cl').replaceChildren(); $('rql').replaceChildren();
   vapidKey = ''; lastErr = ''; nbState = ''; notified = new Set(); $('toast').hidden = true;
@@ -1156,6 +1361,7 @@ function regError(e) {
   if (s.indexOf('anonymous') >= 0 && s.indexOf('disabled') >= 0) return '익명 로그인이 꺼져 있습니다. Supabase에서 Anonymous Sign-ins 를 켜 주세요.';
   if (s.indexOf('rate') >= 0 || s.indexOf('429') >= 0) return '요청이 너무 많습니다. 잠시 후 다시 시도하세요.';
   if (s.indexOf('fetch') >= 0 || s.indexOf('network') >= 0) return '서버에 연결하지 못했습니다. 네트워크를 확인하세요.';
+  if (s.indexOf('username_taken') >= 0 || s.indexOf('profiles_username') >= 0) return '이미 사용 중인 이름입니다. 다른 이름을 입력하세요.';
   if (s.indexOf('codes_exhausted') >= 0) return '사용 가능한 코드가 없습니다.';
   return '가입하지 못했습니다. 다시 시도하세요.';
 }
@@ -1168,7 +1374,7 @@ async function register(name) {
     var r = await sb.rpc('create_profile', { p_name: name });   // 서버가 4자리 코드를 원자적으로 발급
     if (r.error) throw r.error;
     var p = Array.isArray(r.data) ? r.data[0] : r.data;
-    me = { id: p.id, name: p.username, code: p.user_code };
+    me = { id: p.id, name: p.username, code: p.user_code, nameChangedAt: p.username_changed_at || null };
     lset('pm_me', me); lset('pm_had', true);
     enter();
   } catch (e) {
@@ -1213,7 +1419,7 @@ async function start() {
     showReg(lget('pm_had', false) ? '이전 계정의 로그인 정보가 없습니다. 이름을 입력하면 새 계정이 만들어집니다. (브라우저 데이터를 지웠거나 기기를 바꾸면 익명 계정은 복구할 수 없습니다)' : '');
     return;
   }
-  var r = await sb.from('profiles').select('id,username,user_code').eq('id', s.user.id).maybeSingle();
+  var r = await sb.from('profiles').select('id,username,user_code,username_changed_at').eq('id', s.user.id).maybeSingle();
   if (r.error) { showReg('서버에 연결하지 못했습니다. 네트워크를 확인하고 새로고침하세요.'); return; }
   if (!r.data) {
     await sb.auth.signOut({ scope: 'local' });
@@ -1222,7 +1428,7 @@ async function start() {
     showReg('');
     return;
   }
-  me = { id: r.data.id, name: r.data.username, code: r.data.user_code };
+  me = { id: r.data.id, name: r.data.username, code: r.data.user_code, nameChangedAt: r.data.username_changed_at || null };
   lset('pm_me', me);
   enter();
 }
@@ -1242,7 +1448,10 @@ function init() {
     }
     register(name);
   });
-  $('cp').addEventListener('click', function () { copyText(me.code, $('cp')); });
+  $('myc').addEventListener('click', function () { copyText(me.code, null); });
+  $('myc').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyText(me.code, null); }
+  });
   $('nameb').addEventListener('click', editMyName);
   $('lo').addEventListener('click', logout);
   $('nb').addEventListener('click', onNbClick);
@@ -1254,6 +1463,7 @@ function init() {
     var p = $('roomp'); p.hidden = !p.hidden;
     if (!p.hidden) { $('addp').hidden = true; rsay(''); $('rn').focus(); }
   });
+  $('roomClose').addEventListener('click', function () { $('roomp').hidden = true; });
   $('ac').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 4); });
   $('addp').addEventListener('submit', function (e) { e.preventDefault(); doAdd(); });
   $('rmk').addEventListener('submit', function (e) { e.preventDefault(); doCreateOpenRoom(); });
@@ -1267,6 +1477,7 @@ function init() {
     if (panelOpen) renderPanel();
   });
   $('lv').addEventListener('click', roomAction);
+  $('replyClear').addEventListener('click', clearReplyInput);
   $('at').addEventListener('click', function () { $('fi').click(); });
   $('fi').addEventListener('change', function () {
     var f = this.files && this.files[0];
@@ -1276,9 +1487,14 @@ function init() {
   $('lb').addEventListener('click', closeLb);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('lb').hidden) closeLb(); });
   $('cf').addEventListener('submit', function (e) { e.preventDefault(); sendText(); inp.focus(); });
-  inp.addEventListener('input', fitInput);
+  inp.addEventListener('input', function () { fitInput(); updateMentionMenu(); });
   inp.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); sendText(); }
+    if (e.key === 'Escape') hideMentionMenu();
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      if (!$('mentionMenu').hidden) { var first = $('mentionMenu').querySelector('button'); if (first) first.click(); }
+      else sendText();
+    }
   });
   msEl.addEventListener('scroll', function () {
     stick = msEl.scrollHeight - msEl.scrollTop - msEl.clientHeight < 80;
