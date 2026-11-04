@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>메신저</title>
+<title>서대전챗</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -11,8 +11,8 @@
 
 <div id="reg" hidden>
   <form id="rf" autocomplete="off">
-    <h1>메신저</h1>
-    <input id="nm" maxlength="20" placeholder="이름" aria-label="이름">
+    <h1>서대전챗</h1>
+    <input id="nm" maxlength="12" pattern="[가-힣0-9]{1,12}" placeholder="이름 (한글+숫자, 12자 이내)" aria-label="이름" autocomplete="nickname">
     <button id="go" class="pri" type="submit">시작</button>
     <p id="rs"></p>
   </form>
@@ -20,17 +20,16 @@
 
 <div id="app" data-v="list" hidden>
   <aside>
-    <div class="top"><b>메신저</b><span class="net"><i id="nd" class="dot"></i><span id="nt"></span></span></div>
+    <div class="top"><b>서대전챗</b><span class="net"><i id="nd" class="dot"></i><span id="nt"></span></span></div>
     <div class="me">
       <div class="mr"><div id="myn" class="nm"></div><button id="lo" type="button">로그아웃</button></div>
       <div class="code">내 코드 <b id="myc"></b><button id="cp" type="button">복사</button></div>
     </div>
     <div class="acts">
       <button id="addb" type="button">+ 친구 추가</button>
-      <button id="roomb" type="button">방 만들기</button>
+      <button id="roomb" type="button">오픈채팅 만들기</button>
       <button id="nb" type="button">알림 켜기</button>
     </div>
-    <div id="nrow" hidden><span id="nst"></span><button id="ntest" type="button" hidden>테스트</button></div>
     <form id="addp" hidden autocomplete="off">
       <div class="row">
         <input id="ac" inputmode="numeric" maxlength="4" placeholder="친구 코드 4자리" aria-label="친구 코드">
@@ -40,12 +39,8 @@
     </form>
     <div id="roomp" hidden>
       <form id="rmk" class="row" autocomplete="off">
-        <input id="rn" maxlength="30" placeholder="새 방 이름" aria-label="방 이름">
+        <input id="rn" maxlength="30" placeholder="오픈채팅방 이름" aria-label="오픈채팅방 이름">
         <button id="rmkb" class="pri" type="submit">만들기</button>
-      </form>
-      <form id="rjn" class="row" autocomplete="off">
-        <input id="rc" inputmode="numeric" maxlength="6" placeholder="방 코드 6자리" aria-label="방 코드">
-        <button id="rjnb" class="pri" type="submit">참가</button>
       </form>
       <p id="rst"></p>
     </div>
@@ -54,14 +49,15 @@
       <ul id="rql"></ul>
     </div>
     <div id="lists">
+      <h2 id="fh">개인 DM</h2>
       <ul id="fl"></ul>
-      <h2 id="rh" hidden>방</h2>
+      <h2 id="rh" hidden>오픈채팅</h2>
       <ul id="rl"></ul>
     </div>
   </aside>
 
   <main>
-    <div id="empty">친구나 방을 선택하세요</div>
+    <div id="empty">개인 DM이나 오픈채팅을 선택하세요</div>
     <section id="chat" hidden>
       <header>
         <button id="bk" class="back" type="button" aria-label="목록">‹</button>

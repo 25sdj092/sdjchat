@@ -20,7 +20,8 @@ function lset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch 
 
 /* ---------- 상태 ---------- */
 var sb = null, me = null, chan = null, netOk = false, loggingOut = false;
-var convs = new Map();           // 대화방 id -> {id,type,name,code,owner,members:Map,unread,lastAt}
+var convs = new Map();           // 내가 참여 중인 대화방
+var openRooms = [];             // 전체 공개 오픈채팅 목록
 var reqs = [];                   // 받은 친구 요청 [{id,name,code}]
 var active = null;               // 열려 있는 대화방 id
 var shown = new Map();           // 화면에 있는 메시지 id -> entry
@@ -64,7 +65,7 @@ function activeMembers(c) {
   return a;
 }
 function convName(c) {
-  if (c.type === 'group') return c.name;
+  if (c.type === 'open') return c.name;
   var o = otherOf(c);
   return o ? o.name : '알 수 없음';
 }
@@ -86,33 +87,53 @@ function sortedConvs(type) {
 function convItem(c) {
   var li = el('li', 'fr' + (active === c.id ? ' sel' : ''));
   var info = el('div', 'info');
-  var cd = el('div', 'c');
-  if (c.type === 'group') cd.textContent = '코드 ' + c.code + ' · ' + activeMembers(c).length + '명' + (c.owner === me.id ? ' · 방장' : '');
-  else { var o = otherOf(c); cd.textContent = o ? o.code : ''; }
+  var o = otherOf(c);
   info.appendChild(el('div', 'nm', convName(c)));
-  info.appendChild(cd);
+  info.appendChild(el('div', 'c', o ? o.code : ''));
   var bd = el('span', 'bd');
   li.appendChild(info);
   li.appendChild(bd);
-  if (c.type === 'direct') {
-    var x = el('button', 'x', '×'); x.type = 'button'; x.title = '친구 삭제';
-    x.addEventListener('click', function (e) { e.stopPropagation(); removeFriend(c); });
-    li.appendChild(x);
-  }
+  var x = el('button', 'x', '×'); x.type = 'button'; x.title = '친구 삭제';
+  x.addEventListener('click', function (e) { e.stopPropagation(); removeFriend(c); });
+  li.appendChild(x);
   li.addEventListener('click', function () { openChat(c.id); });
   fre[c.id] = { li: li, bd: bd };
   setBadge(c);
   return li;
 }
+function openRoomItem(room, index) {
+  var c = convs.get(room.id), joined = !!c;
+  var hot = index === 0 && Number(room.recent_messages) > 0;
+  var li = el('li', 'fr open-room' + (active === room.id ? ' sel' : '') + (hot ? ' hot' : ''));
+  var info = el('div', 'info');
+  info.appendChild(el('div', 'nm', room.name));
+  var detail = Number(room.member_count || 0) + '명 · 최근 24시간 메시지 ' + Number(room.recent_messages || 0) + '개';
+  info.appendChild(el('div', 'c', detail));
+  var bd = el('span', 'bd');
+  bd.hidden = !joined || !c.unread;
+  if (joined && c.unread) bd.textContent = c.unread > 99 ? '99+' : c.unread;
+  li.appendChild(info);
+  li.appendChild(bd);
+  li.appendChild(el('span', 'join-state', joined ? '참여 중' : '참가'));
+  li.addEventListener('click', function () {
+    if (joined) openChat(room.id);
+    else joinOpenRoom(room.id);
+  });
+  fre[room.id] = { li: li, bd: bd };
+  return li;
+}
+function renderOpenRooms() {
+  var frag = document.createDocumentFragment();
+  openRooms.forEach(function (room, index) { frag.appendChild(openRoomItem(room, index)); });
+  $('rl').replaceChildren(frag);
+  $('rh').hidden = !openRooms.length;
+}
 function renderLists() {
   fre = {};
-  var f = document.createDocumentFragment(), g = document.createDocumentFragment();
+  var f = document.createDocumentFragment();
   sortedConvs('direct').forEach(function (c) { f.appendChild(convItem(c)); });
-  var rooms = sortedConvs('group');
-  rooms.forEach(function (c) { g.appendChild(convItem(c)); });
   $('fl').replaceChildren(f);
-  $('rl').replaceChildren(g);
-  $('rh').hidden = !rooms.length;
+  renderOpenRooms();
   updateTitle();
 }
 function setBadge(c) {
@@ -123,7 +144,7 @@ function setBadge(c) {
 function updateTitle() {
   var n = 0;
   convs.forEach(function (c) { n += c.unread || 0; });
-  document.title = (n ? '(' + (n > 99 ? '99+' : n) + ') ' : '') + '메신저';
+  document.title = (n ? '(' + (n > 99 ? '99+' : n) + ') ' : '') + '서대전챗';
 }
 function renderReqs() {
   $('rq').hidden = !reqs.length;
@@ -168,7 +189,7 @@ function reload() {
 }
 async function loadAll() {
   var r1 = await sb.from('conversation_members')
-    .select('conversation_id,conversations(id,type,name,room_code,owner_id)')
+    .select('conversation_id,conversations(id,type,name,owner_id)')
     .eq('user_id', me.id).is('left_at', null);
   if (r1.error) throw r1.error;
   var mine = r1.data.filter(function (x) { return x.conversations; });
@@ -179,14 +200,15 @@ async function loadAll() {
       : Promise.resolve({ data: [] }),
     sb.from('friendships').select('id,requester:profiles!friendships_requester_id_fkey(username,user_code)')
       .eq('receiver_id', me.id).eq('status', 'pending').order('created_at'),
-    sb.rpc('conversation_summary')
+    sb.rpc('conversation_summary'),
+    sb.rpc('list_open_rooms')
   ]);
   for (var i = 0; i < res.length; i++) if (res[i].error) throw res[i].error;
 
   var next = new Map();
   mine.forEach(function (row) {
     var c = row.conversations;
-    next.set(c.id, { id: c.id, type: c.type, name: c.name, code: c.room_code, owner: c.owner_id, members: new Map(), unread: 0, lastAt: null });
+    next.set(c.id, { id: c.id, type: c.type, name: c.name, owner: c.owner_id, members: new Map(), unread: 0, lastAt: null });
   });
   res[0].data.forEach(function (m) {
     var c = next.get(m.conversation_id);
@@ -199,6 +221,7 @@ async function loadAll() {
     if (c) { c.unread = Number(s.unread) || 0; c.lastAt = s.last_message_at; }
   });
   convs = next;
+  openRooms = res[3].data || [];
   reqs = (res[1].data || []).map(function (r) {
     return { id: r.id, name: r.requester ? r.requester.username : '알 수 없음', code: r.requester ? r.requester.user_code : '' };
   });
@@ -220,25 +243,21 @@ function updateHeader() {
   var c = convs.get(active);
   if (!c) return;
   $('cn').textContent = convName(c);
-  if (c.type === 'group') {
+  if (c.type === 'open') {
     var o = c.members.get(c.owner);
-    $('cs').textContent = '참여 ' + activeMembers(c).length + '명' + (o ? ' · 방장 ' + o.name : '');
+    $('cs').textContent = '오픈채팅 · 참여 ' + activeMembers(c).length + '명' + (o ? ' · 방장 ' + o.name : '');
   } else {
     var p = otherOf(c);
-    $('cs').textContent = p ? '코드 ' + p.code : '';
+    $('cs').textContent = p ? '개인 DM · 코드 ' + p.code : '개인 DM';
   }
 }
 function renderPanel() {
   var c = convs.get(active), box = $('pl');
-  if (!c || c.type !== 'group') { box.hidden = true; return; }
-  var head = el('div', 'pc');
-  head.appendChild(document.createTextNode('방 코드 '));
-  head.appendChild(el('b', null, c.code));
-  var cb = el('button', null, '복사'); cb.type = 'button';
-  cb.addEventListener('click', function () { copyText(c.code, cb); });
-  head.appendChild(cb);
+  if (!c || c.type !== 'open') { box.hidden = true; return; }
+  var members = activeMembers(c);
+  var head = el('div', 'pc', '참여자 ' + members.length + '명');
   var ul = document.createElement('ul');
-  activeMembers(c).forEach(function (m) {
+  members.forEach(function (m) {
     var li = el('li', null, m.name + (m.id === me.id ? ' (나)' : ''));
     if (m.id === c.owner) li.appendChild(el('span', 'own', '방장'));
     ul.appendChild(li);
@@ -264,7 +283,7 @@ function openChat(id) {
   $('empty').hidden = true;
   $('chat').hidden = false;
   $('pl').hidden = true;
-  $('pb').hidden = $('lv').hidden = c.type !== 'group';
+  $('pb').hidden = $('lv').hidden = c.type !== 'open';
   updateHeader();
   hint('');
   shown = new Map(); queued = [];
@@ -332,7 +351,7 @@ function addEntry(m) {
   var d = el('div', 'm' + (mine ? ' me' : ''));
   d.dataset.id = m.id;
   var col = el('div', 'col'), sn = null, pg = null;
-  if (!mine && c && c.type === 'group') { sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn); }
+  if (!mine && c && c.type === 'open') { sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn); }
   var b = el('div', 'b');
   if (m.message_type === 'image') {
     b.className = 'b img';
@@ -545,6 +564,15 @@ function doRead() {
 }
 
 /* ---------- Realtime (연결 1개로 모든 변경 수신) ---------- */
+var openReloadT = null;
+function scheduleOpenRoomsReload() {
+  clearTimeout(openReloadT);
+  openReloadT = setTimeout(async function () {
+    if (!sb || !me) return;
+    var r = await sb.rpc('list_open_rooms');
+    if (!r.error) { openRooms = r.data || []; renderOpenRooms(); }
+  }, 500);
+}
 function startRealtime() {
   if (chan) return;               // 중복 구독 방지
   var seen = false;
@@ -554,6 +582,9 @@ function startRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_members' }, scheduleReload)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'friendships' }, scheduleReload)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'friendships' }, scheduleReload)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations' }, scheduleOpenRoomsReload)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversations' }, scheduleOpenRoomsReload)
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'conversations' }, scheduleOpenRoomsReload)
     .subscribe(function (status) {
       if (status === 'SUBSCRIBED') { setNet(true); if (seen) sync(); seen = true; }
       else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setNet(false, '서버 연결 끊김 · 재연결 중');
@@ -565,6 +596,7 @@ function onMsg(m) {
   if (!c) { scheduleReload(); return; }
   var mine = m.sender_id === me.id;
   if (!mine || !c.lastAt || ts(m.created_at) > ts(c.lastAt)) { c.lastAt = m.created_at; scheduleRender(); }
+  if (c.type === 'open') scheduleOpenRoomsReload();
   if (active === m.conversation_id) {
     var en = shown.get(m.id);
     if (en) {                                          // 내가 보낸 메시지가 돌아온 경우
@@ -619,6 +651,7 @@ function errText(e) {
   if (s.indexOf('self') >= 0) return '자신의 코드는 추가할 수 없습니다.';
   if (s.indexOf('invalid_code') >= 0) return '올바른 코드를 입력하세요.';
   if (s.indexOf('name_required') >= 0) return '이름을 입력하세요.';
+  if (s.indexOf('invalid_name') >= 0) return '이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.';
   return '처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.';
 }
 async function doAdd() {
@@ -652,44 +685,42 @@ async function removeFriend(c) {
   reload();
 }
 
-/* ---------- 그룹방 ---------- */
+/* ---------- 오픈채팅 ---------- */
 function rsay(t) { $('rst').textContent = t || ''; }
-async function doCreateRoom() {
-  var name = $('rn').value.replace(/\s+/g, ' ').trim();
-  if (!name) return rsay('방 이름을 입력하세요.');
+async function doCreateOpenRoom() {
+  var name = $('rn').value.trim();
+  if (!name) return rsay('오픈채팅방 이름을 입력하세요.');
   $('rmkb').disabled = true; rsay('만드는 중…');
-  var r = await sb.rpc('create_room', { p_name: name });
+  var r = await sb.rpc('create_open_room', { p_name: name });
   $('rmkb').disabled = false;
-  if (r.error) return rsay(errText(r.error));
+  if (r.error) {
+    var message = msgOf(r.error).indexOf('open_room_limit') >= 0
+      ? '오픈채팅방은 한 사람당 하나만 만들 수 있습니다.'
+      : errText(r.error);
+    return rsay(message);
+  }
   var room = Array.isArray(r.data) ? r.data[0] : r.data;
   $('rn').value = '';
-  rsay('방을 만들었습니다. 방 코드: ' + room.room_code);
+  rsay('오픈채팅방을 만들었습니다.');
+  $('roomp').hidden = true;
   await reload();
   openChat(room.id);
-  panelOpen = true; renderPanel(); $('pl').hidden = false;       // 만들자마자 코드와 복사 버튼을 보여준다
 }
-async function doJoinRoom() {
-  var code = $('rc').value.trim();
-  if (!/^\d{6}$/.test(code)) return rsay('6자리 숫자를 입력하세요.');
-  $('rjnb').disabled = true; rsay('참가 중…');
-  var r = await sb.rpc('join_room', { p_code: code });
-  $('rjnb').disabled = false;
-  if (r.error) return rsay(errText(r.error));
-  var d = r.data || {};
-  if (!d.ok) return rsay(d.error === 'not_found' ? '존재하지 않는 방 코드입니다.' : d.error === 'too_many' ? '시도가 너무 많습니다. 잠시 후 다시 시도하세요.' : '6자리 숫자를 입력하세요.');
-  $('rc').value = '';
-  rsay(d.already ? '이미 참여 중인 방입니다.' : '참가했습니다.');
+async function joinOpenRoom(id) {
+  var r = await sb.rpc('join_open_room', { p_conv: id });
+  if (r.error) { hint('오픈채팅에 참가하지 못했습니다. 다시 시도하세요.'); return; }
+  if (!r.data || !r.data.ok) { hint('이 오픈채팅방은 더 이상 참가할 수 없습니다.'); scheduleOpenRoomsReload(); return; }
   await reload();
-  openChat(d.id);
+  openChat(id);
 }
-async function leaveRoom() {
+async function leaveOpenRoom() {
   var c = convs.get(active);
-  if (!c || c.type !== 'group') return;
-  if (!confirm('"' + c.name + '" 방에서 나갈까요?\n나간 뒤에는 방 코드로 다시 참가할 수 있고, 다시 참가하면 이전 대화를 볼 수 있습니다.')) return;
-  var r = await sb.rpc('leave_room', { p_conv: c.id });
-  if (r.error) { hint('나가지 못했습니다. 네트워크를 확인하세요.'); return; }
+  if (!c || c.type !== 'open') return;
+  if (!confirm('"' + c.name + '" 오픈채팅방에서 나갈까요?')) return;
+  var r = await sb.rpc('leave_open_room', { p_conv: c.id });
+  if (r.error) { hint('나가지 못했습니다. 다시 시도하세요.'); return; }
   showList();
-  reload();
+  await reload();
 }
 
 /* ---------- 푸시 알림 (권한 → Service Worker → Push 구독 → 서버 저장) ---------- */
@@ -698,9 +729,8 @@ var vapidKey = '', pushBusy = false, nbState = '', lastErr = '', notified = new 
 function pushOk() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
 function pushOff() { return lget('pm_pushoff', false); }          // 사용자가 직접 끈 기기
 function setNst(text, cls) {
-  var p = $('nst');
-  p.textContent = text || ''; p.className = cls || '';
-  $('nrow').hidden = !text;
+  // 성공 상태 문구는 표시하지 않는다. 실패만 짧은 토스트로 알린다.
+  if (text && cls === 'bad' && me) toast('알림 설정', text, null);
 }
 function errMsg(e) {
   var st = e && e.context && e.context.status;
@@ -722,11 +752,11 @@ async function currentSub() {
   var reg = await navigator.serviceWorker.getRegistration('/');
   return reg ? reg.pushManager.getSubscription() : null;
 }
-function askPermission() {        // 반드시 클릭 핸들러 안에서 동기적으로 호출한다
-  return new Promise(function (res) {
-    var r = Notification.requestPermission(res);                   // 구형 Safari 는 콜백, 그 외는 Promise
-    if (r && r.then) r.then(res, function () { res('default'); });
-  });
+function askPermission() {
+  // 권한 요청은 사용자의 클릭 처리 안에서 즉시 호출해야 한다.
+  // 구형 callback 인자는 사용하지 않고 표준 Promise 반환값을 사용한다.
+  try { return Notification.requestPermission(); }
+  catch (e) { return Promise.reject(e); }
 }
 
 async function getReg() {
@@ -791,24 +821,45 @@ async function disablePush() {
   pushBusy = false;
   refreshNb();
 }
-function onNbClick() {            // 이 함수 안에서는 requestPermission 이전에 await 를 쓰지 않는다 (사용자 클릭 유지)
+function onNbClick() {
   if (!pushOk() || pushBusy) return;
   var perm = Notification.permission;
-  if (perm === 'denied') { refreshNb(); return; }                  // 다시 요청하지 않고 안내만 보여준다
+  if (perm === 'denied') {
+    toast('알림이 차단되어 있습니다',
+      'Chrome 사이트 설정에서 이 사이트의 알림을 허용해야 합니다. 학교 기기 정책으로 차단된 경우에는 관리자의 설정이 필요합니다.', null);
+    return;
+  }
   if (perm === 'default') {
-    pushBusy = true; lastErr = '';
-    setNst('브라우저의 알림 허용 창에서 "허용"을 눌러 주세요.', 'warn');
-    askPermission().then(function (r) {
+    pushBusy = true; lastErr = ''; $('nb').disabled = true;
+    // await나 다른 비동기 작업을 거치지 않고 클릭 이벤트 안에서 요청한다.
+    askPermission().then(function (result) {
       pushBusy = false;
-      if (r === 'granted') enablePush(); else refreshNb();
+      if (result === 'granted') {
+        enablePush();
+      } else if (result === 'denied') {
+        nbState = 'denied';
+        $('nb').textContent = '알림 차단됨';
+        $('nb').disabled = true;
+        toast('알림 권한이 거부되었습니다',
+          'Chrome 주소창 왼쪽의 사이트 설정에서 알림 권한을 변경할 수 있습니다. 학교 기기 정책으로 잠겨 있으면 관리자에게 문의해야 합니다.', null);
+      } else {
+        refreshNb();
+        toast('알림 권한을 확인하지 못했습니다',
+          'Chrome 주소창의 사이트 설정에서 알림 권한을 확인한 뒤 다시 시도하세요.', null);
+      }
+    }).catch(function (e) {
+      pushBusy = false;
+      $('nb').disabled = false;
+      lastErr = '알림 권한 요청 실패 — ' + msgOf(e);
+      refreshNb();
+      toast('알림 설정 오류', lastErr, null);
     });
     return;
   }
   if (nbState === 'on') disablePush(); else enablePush();
 }
 async function refreshNb() {      // 권한 상태 / 구독 상태 / 서버 등록 상태를 구분해서 표시
-  var b = $('nb'), t = $('ntest');
-  t.hidden = true;
+  var b = $('nb');
   if (!pushOk()) {
     nbState = 'unsupported'; b.hidden = true;
     setNst(window.isSecureContext === false ? '알림은 HTTPS 주소에서만 사용할 수 있습니다.' : '이 브라우저는 푸시 알림을 지원하지 않습니다. (iPhone/iPad는 홈 화면에 추가한 앱에서만 가능)', 'warn');
@@ -834,8 +885,8 @@ async function refreshNb() {      // 권한 상태 / 구독 상태 / 서버 등�
   } catch (e) {}
   if (perm !== Notification.permission) return refreshNb();        // 확인하는 사이 권한이 바뀐 경우
   if (sub && saved) {
-    nbState = 'on'; b.textContent = '알림 끄기'; t.hidden = false;
-    setNst(lastErr || '푸시 구독 완료 — 탭을 닫아도 새 메시지 알림이 옵니다.', lastErr ? 'bad' : 'ok');
+    nbState = 'on'; b.textContent = '알림 끄기';
+    if (lastErr) setNst(lastErr, 'bad');
   } else if (sub) {
     nbState = 'unsaved'; b.textContent = '알림 켜기';
     setNst(lastErr || 'Push 구독 실패 — 서버에 등록되지 않았습니다. "알림 켜기"로 다시 시도하세요.', 'bad');
@@ -861,24 +912,7 @@ async function initPush() {       // 로그인 직후: 권한 팝업은 띄우�
   if (Notification.permission === 'granted' && !pushOff()) enablePush();
   else { try { await getReg(); } catch (e) {} refreshNb(); }       // Service Worker 는 항상 등록해 둔다
 }
-async function testPush() {
-  var t = $('ntest'); t.disabled = true; lastErr = '';
-  setNst('테스트 알림을 보내는 중…', 'warn');
-  var cls = 'ok', msg = '';
-  try {
-    var r = await sb.functions.invoke('send-push', { body: { action: 'test' } });
-    if (r.error) throw stepErr('서버 함수 호출 실패', r.error);
-    var d = r.data || {};
-    if (d.sent > 0) msg = '테스트 알림을 ' + d.sent + '개 기기로 보냈습니다. 알림이 보이는지 확인하세요.';
-    else if (d.reason === 'no_subscriptions') { cls = 'bad'; msg = '서버에 구독이 없습니다. "알림 켜기"를 다시 눌러 주세요.'; }
-    else { cls = 'bad'; msg = '푸시 서비스가 구독을 거부했습니다' + (d.removed ? ' (무효한 구독 ' + d.removed + '개 삭제됨)' : '') + '. 알림을 껐다가 다시 켜 주세요.'; }
-  } catch (e) { cls = 'bad'; msg = '테스트 실패 — ' + msgOf(e); }
-  setNst(msg, cls);
-  t.disabled = false;
-  setTimeout(function () { if (me) refreshNb(); }, 8000);
-}
-
-/* 앱이 열려 있을 때의 알림 (Realtime 으로 받은 새 메시지). 같은 tag 를 써서 서버 푸시와 합쳐진다. */
+remove test push function/* 앱이 열려 있을 때의 알림 (Realtime 으로 받은 새 메시지). 같은 tag 를 써서 서버 푸시와 합쳐진다. */
 function kickPush(id) {           // 보낸 사람 앱이 서버에 알림 발송을 요청 (DB 트리거가 막혀도 알림이 가도록). 서버가 중복을 걸러낸다.
   try { sb.functions.invoke('send-push', { body: { message_id: id } }).then(noop, noop); } catch (e) {}
 }
@@ -895,7 +929,7 @@ async function notifyIncoming(c, m) {
   notified.add(m.id);
   if (notified.size > 300) notified.delete(notified.values().next().value);
   var sender = nameOf(c, m.sender_id);
-  var title = c.type === 'group' ? sender + ' · ' + c.name : sender;
+  var title = c.type === 'open' ? sender + ' · ' + c.name : sender;
   var body = m.message_type === 'image' ? '사진을 보냈습니다.' : String(m.content).replace(/\s+/g, ' ').trim().slice(0, 80);
   var done = false;
   if (pushOk() && Notification.permission === 'granted') {
@@ -931,12 +965,12 @@ function copyText(text, b) {
 function resetState() {
   if (chan) { try { sb.removeChannel(chan); } catch (e) {} chan = null; }
   clearTimeout(rlT); clearTimeout(pendingRead); pendingRead = null;
-  convs = new Map(); reqs = []; shown = new Map(); outbox = new Map(); urls = new Map(); queued = [];
+  convs = new Map(); openRooms = []; reqs = []; shown = new Map(); outbox = new Map(); urls = new Map(); queued = [];
   active = null; me = null; loadTok++; firstLoading = false; pendingOpen = null; panelOpen = false;
   msEl.replaceChildren();
   $('fl').replaceChildren(); $('rl').replaceChildren(); $('rql').replaceChildren();
-  vapidKey = ''; lastErr = ''; nbState = ''; notified = new Set(); $('nrow').hidden = true; $('toast').hidden = true;
-  document.title = '메신저';
+  vapidKey = ''; lastErr = ''; nbState = ''; notified = new Set(); $('toast').hidden = true;
+  document.title = '서대전챗';
 }
 async function logout() {
   if (!confirm('로그아웃할까요?\n\n이 계정은 익명 계정이라 로그아웃하면 다시 로그인할 수 없습니다. 친구·방·대화 기록에 더 이상 접근할 수 없게 됩니다.')) return;
@@ -1022,11 +1056,15 @@ async function start() {
     showReg(lget('pm_had', false) ? '이전 계정의 로그인 정보가 없습니다. 이름을 입력하면 새 계정이 만들어집니다. (브라우저 데이터를 지웠거나 기기를 바꾸면 익명 계정은 복구할 수 없습니다)' : '');
     return;
   }
-  var cached = lget('pm_me', null);
-  if (cached && cached.id === s.user.id) { me = cached; enter(); return; }
   var r = await sb.from('profiles').select('id,username,user_code').eq('id', s.user.id).maybeSingle();
   if (r.error) { showReg('서버에 연결하지 못했습니다. 네트워크를 확인하고 새로고침하세요.'); return; }
-  if (!r.data) { showReg(''); return; }
+  if (!r.data) {
+    await sb.auth.signOut({ scope: 'local' });
+    try { localStorage.removeItem('pm_me'); } catch (e) {}
+    lset('pm_had', false);
+    showReg('');
+    return;
+  }
   me = { id: r.data.id, name: r.data.username, code: r.data.user_code };
   lset('pm_me', me);
   enter();
@@ -1037,14 +1075,17 @@ function init() {
 
   $('rf').addEventListener('submit', function (e) {
     e.preventDefault();
-    var name = $('nm').value.replace(/\s+/g, ' ').trim().slice(0, 20);
-    if (!name) { $('rs').textContent = '이름을 입력하세요.'; return; }
+    var name = $('nm').value;
+    if (!/^[가-힣0-9]{1,12}$/.test(name)) {
+      $('rs').textContent = '이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.';
+      return;
+    }
     register(name);
   });
   $('cp').addEventListener('click', function () { copyText(me.code, $('cp')); });
+  $('nm').addEventListener('input', function () { this.value = this.value.replace(/[^가-힣0-9]/g, '').slice(0, 12); });
   $('lo').addEventListener('click', logout);
   $('nb').addEventListener('click', onNbClick);
-  $('ntest').addEventListener('click', testPush);
   $('addb').addEventListener('click', function () {
     var p = $('addp'); p.hidden = !p.hidden;
     if (!p.hidden) { $('roomp').hidden = true; say(''); $('ac').focus(); }
@@ -1054,16 +1095,14 @@ function init() {
     if (!p.hidden) { $('addp').hidden = true; rsay(''); $('rn').focus(); }
   });
   $('ac').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 4); });
-  $('rc').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); });
   $('addp').addEventListener('submit', function (e) { e.preventDefault(); doAdd(); });
-  $('rmk').addEventListener('submit', function (e) { e.preventDefault(); doCreateRoom(); });
-  $('rjn').addEventListener('submit', function (e) { e.preventDefault(); doJoinRoom(); });
+  $('rmk').addEventListener('submit', function (e) { e.preventDefault(); doCreateOpenRoom(); });
   $('pb').addEventListener('click', function () {
     var p = $('pl'); panelOpen = p.hidden;
     p.hidden = !panelOpen;
     if (panelOpen) renderPanel();
   });
-  $('lv').addEventListener('click', leaveRoom);
+  $('lv').addEventListener('click', leaveOpenRoom);
   $('at').addEventListener('click', function () { $('fi').click(); });
   $('fi').addEventListener('change', function () {
     var f = this.files && this.files[0];

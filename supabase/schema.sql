@@ -1,5 +1,5 @@
 -- =====================================================================
--- 메신저 Supabase 스키마
+-- 서대전챗 Supabase 스키마
 -- Supabase 대시보드 > SQL Editor 에서 이 파일 전체를 한 번에 실행하세요.
 -- 여러 번 실행해도 안전하도록 작성되어 있습니다(idempotent).
 -- =====================================================================
@@ -13,7 +13,7 @@ create extension if not exists pg_net;      -- 새 메시지 → Edge Function �
 -- 사용자 프로필 (Supabase Auth 익명 사용자 1명 = 프로필 1개)
 create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
-  username    text not null check (char_length(username) between 1 and 20),
+  username    text not null constraint profiles_username_format_chk check (username ~ '^[가-힣0-9]{1,12}$'),
   user_code   text not null unique check (user_code ~ '^[0-9]{4}$'),   -- 공개 식별자. 인증 수단 아님
   created_at  timestamptz not null default now()
 );
@@ -32,20 +32,24 @@ create unique index if not exists friendships_pair_uq
 create index if not exists friendships_receiver_idx  on public.friendships (receiver_id, status);
 create index if not exists friendships_requester_idx on public.friendships (requester_id);
 
--- 대화방: 1:1(direct) 또는 그룹(group)
+-- 대화방: 개인 DM(direct) 또는 공개 오픈채팅(open)
 create table if not exists public.conversations (
-  id          uuid primary key default gen_random_uuid(),
-  type        text not null check (type in ('direct','group')),
-  name        text check (name is null or char_length(name) between 1 and 30),
-  room_code   text unique check (room_code is null or room_code ~ '^[0-9]{6}$'),
-  owner_id    uuid references public.profiles(id) on delete set null,       -- 그룹 방장
-  direct_key  text unique,                                                   -- 1:1 방 중복 방지 ("작은id:큰id")
-  created_at  timestamptz not null default now(),
+  id              uuid primary key default gen_random_uuid(),
+  type            text not null check (type in ('direct','open')),
+  name            text check (name is null or char_length(name) between 1 and 30),
+  owner_id        uuid references public.profiles(id) on delete set null,
+  created_by      uuid references public.profiles(id) on delete cascade,
+  direct_key      text unique,
+  last_message_at timestamptz,
+  member_count_updated_at timestamptz,
+  created_at      timestamptz not null default now(),
   check (
-    (type = 'group'  and room_code is not null and name is not null and direct_key is null) or
-    (type = 'direct' and room_code is null and direct_key is not null)
+    (type = 'open' and name is not null and created_by is not null and direct_key is null) or
+    (type = 'direct' and name is null and created_by is null and direct_key is not null)
   )
 );
+create unique index if not exists conversations_open_creator_uq
+  on public.conversations(created_by) where type = 'open';
 
 -- 메시지. seq 는 대화 순서와 읽음 위치 비교에 쓰는 전역 증가 번호.
 create table if not exists public.messages (
@@ -103,13 +107,6 @@ create table if not exists public.app_settings (
   key   text primary key,
   value text not null
 );
-
--- 방 코드 무차별 대입 방지용 실패 기록
-create table if not exists public.join_failures (
-  user_id  uuid not null,
-  at       timestamptz not null default now()
-);
-create index if not exists join_failures_idx on public.join_failures (user_id, at);
 
 -- ---------------------------------------------------------------------
 -- 2. 권한 확인용 함수 (RLS 정책에서 사용, auth.uid() 기준)
@@ -224,16 +221,16 @@ declare uid uuid := auth.uid(); r public.profiles; nm text; code text; n int := 
 begin
   if uid is null then raise exception 'not_authenticated' using errcode = '28000'; end if;
   select * into r from public.profiles where id = uid;
-  if found then return r; end if;                         -- 이미 가입됨(재호출 안전)
-
-  nm := left(btrim(regexp_replace(coalesce(p_name, ''), '\s+', ' ', 'g')), 20);
-  if nm = '' then raise exception 'name_required' using errcode = '22023'; end if;
-
+  if found then return r; end if;
+  nm := coalesce(p_name, '');
+  if nm !~ '^[가-힣0-9]{1,12}$' then
+    raise exception 'invalid_name' using errcode = '22023';
+  end if;
   loop
     n := n + 1;
     if n <= 30 then
       code := lpad(floor(random() * 10000)::int::text, 4, '0');
-    else                                                   -- 코드가 거의 찼을 때: 빈 코드를 직접 찾는다
+    else
       select lpad(g::text, 4, '0') into code
       from generate_series(0, 9999) g
       where not exists (select 1 from public.profiles p where p.user_code = lpad(g::text, 4, '0'))
@@ -244,7 +241,7 @@ begin
       insert into public.profiles (id, username, user_code) values (uid, nm, code) returning * into r;
       return r;
     exception when unique_violation then
-      select * into r from public.profiles where id = uid;   -- 같은 사용자의 동시 호출이면 기존 값 반환
+      select * into r from public.profiles where id = uid;
       if found then return r; end if;
       if n >= 100 then raise exception 'codes_exhausted' using errcode = '53400'; end if;
     end;
@@ -308,75 +305,115 @@ begin
     and conversation_id in (select id from public.conversations where direct_key = k);
 end $$;
 
--- 그룹방 생성: 6자리 코드 자동 발급, 만든 사람이 방장
-create or replace function public.create_room(p_name text)
+-- 공개 오픈채팅: 계정당 생성 가능한 방은 하나. 다른 방에는 여러 개 참가할 수 있다.
+create or replace function public.create_open_room(p_name text)
 returns public.conversations language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid(); nm text; r public.conversations; n int := 0;
+declare uid uuid := auth.uid(); nm text; r public.conversations;
 begin
   if uid is null then raise exception 'not_authenticated' using errcode = '28000'; end if;
-  if not exists (select 1 from public.profiles where id = uid) then raise exception 'no_profile' using errcode = '22023'; end if;
-  nm := left(btrim(regexp_replace(coalesce(p_name, ''), '\s+', ' ', 'g')), 30);
-  if nm = '' then raise exception 'name_required' using errcode = '22023'; end if;
-  loop
-    n := n + 1;
-    begin
-      insert into public.conversations (type, name, room_code, owner_id)
-      values ('group', nm, lpad(floor(random() * 1000000)::int::text, 6, '0'), uid)
-      returning * into r;
-      exit;
-    exception when unique_violation then
-      if n >= 50 then raise exception 'codes_exhausted' using errcode = '53400'; end if;
-    end;
-  end loop;
+  if not exists (select 1 from public.profiles where id = uid) then
+    raise exception 'no_profile' using errcode = '22023';
+  end if;
+  perform pg_advisory_xact_lock(hashtext(uid::text));
+  if exists (select 1 from public.conversations where type = 'open' and created_by = uid) then
+    raise exception 'open_room_limit' using errcode = 'P0001';
+  end if;
+  nm := btrim(coalesce(p_name, ''));
+  if nm = '' or char_length(nm) > 30 then
+    raise exception 'invalid_room_name' using errcode = '22023';
+  end if;
+  insert into public.conversations (type, name, owner_id, created_by)
+  values ('open', nm, uid, uid)
+  returning * into r;
   perform public._join_member(r.id, uid);
   return r;
 end $$;
 
--- 방 참가. 실패는 예외가 아니라 결과값으로 돌려줘서 실패 기록이 롤백되지 않게 한다.
--- 반환(jsonb): {ok:true,id,already} | {ok:false,error:'not_found'|'too_many'|'invalid_code'}
-create or replace function public.join_room(p_code text)
+create or replace function public.join_open_room(p_conv uuid)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid(); cid uuid; active boolean; fails int;
+declare uid uuid := auth.uid(); room_id uuid;
 begin
   if uid is null then raise exception 'not_authenticated' using errcode = '28000'; end if;
-  if not exists (select 1 from public.profiles where id = uid) then raise exception 'no_profile' using errcode = '22023'; end if;
-  if p_code is null or p_code !~ '^[0-9]{6}$' then return jsonb_build_object('ok', false, 'error', 'invalid_code'); end if;
-
-  delete from public.join_failures where user_id = uid and at < now() - interval '1 hour';
-  select count(*) into fails from public.join_failures where user_id = uid and at > now() - interval '10 minutes';
-  if fails >= 10 then return jsonb_build_object('ok', false, 'error', 'too_many'); end if;
-
-  select id into cid from public.conversations where room_code = p_code and type = 'group';
-  if not found then
-    insert into public.join_failures (user_id) values (uid);
-    return jsonb_build_object('ok', false, 'error', 'not_found');
+  if not exists (select 1 from public.profiles where id = uid) then
+    raise exception 'no_profile' using errcode = '22023';
   end if;
-
-  select (left_at is null) into active from public.conversation_members where conversation_id = cid and user_id = uid;
-  if found and active then return jsonb_build_object('ok', true, 'id', cid, 'already', true); end if;
-
-  perform public._join_member(cid, uid);
-  update public.conversations set owner_id = uid where id = cid and owner_id is null;   -- 방장이 없던 방이면 방장
-  return jsonb_build_object('ok', true, 'id', cid, 'already', false);
+  select id into room_id from public.conversations
+    where id = p_conv and type = 'open' for update;
+  if not found then return jsonb_build_object('ok', false, 'error', 'not_found'); end if;
+  if exists (select 1 from public.conversation_members
+    where conversation_id = room_id and user_id = uid and left_at is null) then
+    return jsonb_build_object('ok', true, 'already', true);
+  end if;
+  perform public._join_member(room_id, uid);
+  return jsonb_build_object('ok', true, 'already', false);
 end $$;
 
--- 방 나가기. 방장이 나가면 가장 오래 참여한 사람에게 방장을 넘긴다.
-create or replace function public.leave_room(p_conv uuid)
+create or replace function public.leave_open_room(p_conv uuid)
 returns void language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid();
+declare uid uuid := auth.uid(); room public.conversations; n integer; next_owner uuid;
 begin
   if uid is null then raise exception 'not_authenticated' using errcode = '28000'; end if;
-  if not exists (select 1 from public.conversations where id = p_conv and type = 'group') then
-    raise exception 'not_group' using errcode = '22023';
-  end if;
+  select * into room from public.conversations where id = p_conv and type = 'open' for update;
+  if not found then raise exception 'room_not_found' using errcode = 'P0002'; end if;
   update public.conversation_members set left_at = now()
-  where conversation_id = p_conv and user_id = uid and left_at is null;
+    where conversation_id = p_conv and user_id = uid and left_at is null;
   if not found then return; end if;
-  update public.conversations c
-  set owner_id = (select user_id from public.conversation_members
-                  where conversation_id = p_conv and left_at is null order by joined_at limit 1)
-  where c.id = p_conv and c.owner_id = uid;
+  select count(*) into n from public.conversation_members
+    where conversation_id = p_conv and left_at is null;
+  if n = 0 then
+    delete from public.conversations where id = p_conv;
+    return;
+  end if;
+  if room.owner_id = uid then
+    select user_id into next_owner from public.conversation_members
+      where conversation_id = p_conv and left_at is null order by joined_at limit 1;
+    update public.conversations set owner_id = next_owner where id = p_conv;
+  end if;
 end $$;
+
+create or replace function public.list_open_rooms()
+returns table (
+  id uuid, name text, member_count bigint,
+  recent_messages bigint, last_message_at timestamptz
+)
+language sql stable security definer set search_path = public as $$
+  select c.id, c.name,
+    (select count(*) from public.conversation_members cm
+      where cm.conversation_id = c.id and cm.left_at is null) as member_count,
+    (select count(*) from public.messages m
+      where m.conversation_id = c.id and m.created_at >= now() - interval '24 hours') as recent_messages,
+    coalesce(c.last_message_at, (
+      select max(m.created_at) from public.messages m where m.conversation_id = c.id
+    )) as last_message_at
+  from public.conversations c
+  where c.type = 'open' and auth.uid() is not null
+  order by recent_messages desc, last_message_at desc nulls last, c.created_at desc
+  limit 100
+$$;
+
+create schema if not exists private;
+
+create or replace function private.touch_open_room_activity()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  update public.conversations set last_message_at = new.created_at
+    where id = new.conversation_id and type = 'open';
+  return new;
+end $$;
+drop trigger if exists messages_touch_open_room on public.messages;
+create trigger messages_touch_open_room after insert on public.messages
+  for each row execute function private.touch_open_room_activity();
+
+create or replace function private.touch_open_room_members()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  update public.conversations set member_count_updated_at = now()
+    where id = new.conversation_id and type = 'open';
+  return new;
+end $$;
+drop trigger if exists members_touch_open_room on public.conversation_members;
+create trigger members_touch_open_room after insert or update of left_at on public.conversation_members
+  for each row execute function private.touch_open_room_members();
 
 -- 읽음 위치 저장: 앞으로만 이동, 같은 방의 메시지만 허용, 내 행만 수정
 create or replace function public.mark_read(p_conv uuid, p_message uuid)
@@ -433,7 +470,7 @@ $$;
 -- 5. 테이블 권한 (RLS 와 별개로 한 번 더 좁힌다)
 -- ---------------------------------------------------------------------
 revoke all on public.profiles, public.friendships, public.conversations, public.conversation_members,
-              public.messages, public.push_subscriptions, public.app_settings, public.join_failures
+              public.messages, public.push_subscriptions, public.app_settings
   from anon, authenticated;
 
 grant select on public.profiles, public.friendships, public.conversations, public.conversation_members,
@@ -454,7 +491,6 @@ alter table public.conversation_members enable row level security;
 alter table public.messages             enable row level security;
 alter table public.push_subscriptions   enable row level security;
 alter table public.app_settings         enable row level security;
-alter table public.join_failures        enable row level security;
 
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select to authenticated
@@ -470,7 +506,7 @@ create policy friendships_select on public.friendships for select to authenticat
 
 drop policy if exists conversations_select on public.conversations;
 create policy conversations_select on public.conversations for select to authenticated
-  using (public.is_active_member(id));
+  using (type = 'open' or public.is_active_member(id));
 
 drop policy if exists members_select on public.conversation_members;
 create policy members_select on public.conversation_members for select to authenticated
@@ -500,16 +536,16 @@ revoke all on function
   public.is_active_member(uuid), public.can_see_profile(uuid), public.can_access_chat_object(text),
   public._join_member(uuid, uuid), public._accept_friendship(uuid), public.notify_new_message(),
   public.create_profile(text), public.send_friend_request(text), public.respond_friend_request(uuid, boolean),
-  public.remove_friend(uuid), public.create_room(text), public.join_room(text), public.leave_room(uuid),
-  public.mark_read(uuid, uuid), public.save_push_subscription(jsonb),
+  public.remove_friend(uuid), public.create_open_room(text), public.join_open_room(uuid), public.leave_open_room(uuid),
+  public.list_open_rooms(), public.mark_read(uuid, uuid), public.save_push_subscription(jsonb),
   public.conversation_summary(), public.message_unread_count(uuid)
   from public, anon, authenticated;
 
 grant execute on function
   public.is_active_member(uuid), public.can_see_profile(uuid), public.can_access_chat_object(text),
   public.create_profile(text), public.send_friend_request(text), public.respond_friend_request(uuid, boolean),
-  public.remove_friend(uuid), public.create_room(text), public.join_room(text), public.leave_room(uuid),
-  public.mark_read(uuid, uuid), public.save_push_subscription(jsonb),
+  public.remove_friend(uuid), public.create_open_room(text), public.join_open_room(uuid), public.leave_open_room(uuid),
+  public.list_open_rooms(), public.mark_read(uuid, uuid), public.save_push_subscription(jsonb),
   public.conversation_summary(), public.message_unread_count(uuid)
   to authenticated;
 
@@ -538,7 +574,7 @@ create policy chat_images_select on storage.objects for select to authenticated
 do $$
 declare t text;
 begin
-  foreach t in array array['messages', 'conversation_members', 'friendships'] loop
+  foreach t in array array['messages', 'conversation_members', 'friendships', 'conversations'] loop
     if not exists (
       select 1 from pg_publication_tables
       where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
@@ -590,7 +626,7 @@ create policy profiles_select on public.profiles for select to authenticated
   using (id = (select auth.uid()) or private.can_see_profile(id));
 drop policy if exists conversations_select on public.conversations;
 create policy conversations_select on public.conversations for select to authenticated
-  using (private.is_active_member(id));
+  using (type = 'open' or private.is_active_member(id));
 drop policy if exists members_select on public.conversation_members;
 create policy members_select on public.conversation_members for select to authenticated
   using (user_id = (select auth.uid()) or private.is_active_member(conversation_id));
@@ -738,14 +774,6 @@ create index if not exists messages_sender_id_idx on public.messages(sender_id);
 create index if not exists conversations_owner_id_idx on public.conversations(owner_id) where owner_id is not null;
 create index if not exists conversation_members_last_read_idx
   on public.conversation_members(last_read_message_id) where last_read_message_id is not null;
-alter table public.join_failures add column if not exists id bigint generated always as identity;
-do $$
-begin
-  if not exists (select 1 from pg_constraint where conrelid='public.join_failures'::regclass and contype='p') then
-    alter table public.join_failures add constraint join_failures_pkey primary key(id);
-  end if;
-end $$;
-
 
 -- ---------------------------------------------------------------------
 -- 13. 푸시 중복 방지/발송 기록 (supabase/migrations/20261103_push_fix.sql 과 동일)
@@ -764,3 +792,11 @@ create index if not exists push_deliveries_claimed_idx on public.push_deliveries
 -- 클라이언트(anon/authenticated)는 접근 불가. Edge Function(service_role)만 사용한다.
 alter table public.push_deliveries enable row level security;
 revoke all on public.push_deliveries from public, anon, authenticated;
+
+-- 공개 오픈채팅 함수는 로그인 사용자만 호출할 수 있다.
+revoke all on function public.create_open_room(text), public.join_open_room(uuid),
+  public.leave_open_room(uuid), public.list_open_rooms() from public, anon, authenticated;
+grant execute on function public.create_open_room(text), public.join_open_room(uuid),
+  public.leave_open_room(uuid), public.list_open_rooms() to authenticated;
+revoke all on function private.touch_open_room_activity() from public, anon, authenticated;
+revoke all on function private.touch_open_room_members() from public, anon, authenticated;
