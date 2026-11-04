@@ -121,6 +121,7 @@ select id, status_code, error_msg, left(content::text, 200) as content, created 
    - `supabase/migrations/20261104_chat_interactions_unique_names.sql`
    - `supabase/migrations/20261104_chat_interaction_indexes.sql`
    - `supabase/migrations/20261104_chat_message_insert_permission.sql`
+   - `supabase/migrations/20261105_allow_chat_gif.sql`
 5. `supabase/functions/send-push/index.ts`를 `send-push`로 배포 (`supabase/config.toml` 에 `verify_jwt=false` 가 지정되어 있음; 함수가 별도 인증을 수행)
 6. 프로젝트 URL 및 Publishable Key를 `public/config.js` 또는 Vercel 빌드 환경변수에 입력
 
@@ -159,8 +160,11 @@ SQL 스키마는 비공개 `chat-images` 버킷, Storage 정책, RLS, Realtime �
 
 - 이름은 한글+숫자 1~12자, **중복 불가**이며 이름 변경은 **7일에 한 번**만 가능
 - 이름 변경 전 7일 제한 안내를 표시하고, DB에서도 변경 주기를 확인
-- **방 생성** 패널에서 오픈채팅 생성 / 6자리 코드방 생성 / 코드로 참가를 각각 설명과 함께 구분
+- **방 만들기**와 **방 추가**를 서로 다른 버튼과 패널로 분리
+- 친구 추가 버튼은 내 4자리 코드 오른쪽에 배치
 - 내 4자리 코드는 숫자 자체를 클릭하거나 키보드로 선택해 복사
+- 채팅에 JPEG/PNG/WebP/GIF 파일 첨부 가능. GIF는 원본 애니메이션 유지
+- 메시지의 `http://`, `https://`, `www.` URL은 클릭 가능한 링크로 표시
 - 메시지에 👍 ❤️ 😂 😮 😢 🎉 반응을 추가하거나 취소 가능
 - 메시지별 답글과 답글 미리보기 지원
 - 입력창에서 `@`를 입력하면 현재 방 참여자 이름을 추천하고, 선택한 사용자를 멘션으로 저장
