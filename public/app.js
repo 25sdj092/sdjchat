@@ -752,11 +752,11 @@ async function currentSub() {
   var reg = await navigator.serviceWorker.getRegistration('/');
   return reg ? reg.pushManager.getSubscription() : null;
 }
-function askPermission() {        // 반드시 클릭 핸들러 안에서 동기적으로 호출한다
-  return new Promise(function (res) {
-    var r = Notification.requestPermission(res);                   // 구형 Safari 는 콜백, 그 외는 Promise
-    if (r && r.then) r.then(res, function () { res('default'); });
-  });
+function askPermission() {
+  // 권한 요청은 사용자의 클릭 처리 안에서 즉시 호출해야 한다.
+  // 구형 callback 인자는 사용하지 않고 표준 Promise 반환값을 사용한다.
+  try { return Notification.requestPermission(); }
+  catch (e) { return Promise.reject(e); }
 }
 
 async function getReg() {
@@ -821,16 +821,38 @@ async function disablePush() {
   pushBusy = false;
   refreshNb();
 }
-function onNbClick() {            // 이 함수 안에서는 requestPermission 이전에 await 를 쓰지 않는다 (사용자 클릭 유지)
+function onNbClick() {
   if (!pushOk() || pushBusy) return;
   var perm = Notification.permission;
-  if (perm === 'denied') { refreshNb(); return; }                  // 다시 요청하지 않고 안내만 보여준다
+  if (perm === 'denied') {
+    toast('알림이 차단되어 있습니다',
+      'Chrome 사이트 설정에서 이 사이트의 알림을 허용해야 합니다. 학교 기기 정책으로 차단된 경우에는 관리자의 설정이 필요합니다.', null);
+    return;
+  }
   if (perm === 'default') {
-    pushBusy = true; lastErr = '';
-    setNst('브라우저의 알림 허용 창에서 "허용"을 눌러 주세요.', 'warn');
-    askPermission().then(function (r) {
+    pushBusy = true; lastErr = ''; $('nb').disabled = true;
+    // await나 다른 비동기 작업을 거치지 않고 클릭 이벤트 안에서 요청한다.
+    askPermission().then(function (result) {
       pushBusy = false;
-      if (r === 'granted') enablePush(); else refreshNb();
+      if (result === 'granted') {
+        enablePush();
+      } else if (result === 'denied') {
+        nbState = 'denied';
+        $('nb').textContent = '알림 차단됨';
+        $('nb').disabled = true;
+        toast('알림 권한이 거부되었습니다',
+          'Chrome 주소창 왼쪽의 사이트 설정에서 알림 권한을 변경할 수 있습니다. 학교 기기 정책으로 잠겨 있으면 관리자에게 문의해야 합니다.', null);
+      } else {
+        refreshNb();
+        toast('알림 권한을 확인하지 못했습니다',
+          'Chrome 주소창의 사이트 설정에서 알림 권한을 확인한 뒤 다시 시도하세요.', null);
+      }
+    }).catch(function (e) {
+      pushBusy = false;
+      $('nb').disabled = false;
+      lastErr = '알림 권한 요청 실패 — ' + msgOf(e);
+      refreshNb();
+      toast('알림 설정 오류', lastErr, null);
     });
     return;
   }
