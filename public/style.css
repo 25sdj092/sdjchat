@@ -125,3 +125,47 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 
 #rnm{font-size:12px;padding:2px 8px}
 #lv{font-size:12px;padding:2px 8px}
+
+/* 방 생성 패널 */
+#roomp{max-height:48vh;overflow-y:auto}
+.roomp-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.roomp-head strong{font-size:14px}
+.roomp-head button{font-size:12px;padding:2px 8px}
+.room-guide{font-size:12px;color:#6b7280;margin:4px 0 8px}
+.room-card{border:1px solid #dfe3e8;border-radius:7px;background:#fff;padding:9px;margin:8px 0}
+.room-card-title{font-size:13px;font-weight:700;margin-bottom:3px}
+.room-card p{font-size:11px;line-height:1.4;color:#6b7280;margin-bottom:7px}
+.room-form{display:flex;flex-direction:column;gap:6px}
+.room-form input{width:100%;min-width:0;font-size:14px}
+.room-form button{width:100%;font-size:12px;padding:6px}
+
+/* 클릭하면 복사되는 내 코드 */
+.code b[role=button]{cursor:pointer;border-radius:4px;padding:1px 4px;margin-left:-4px}
+.code b[role=button]:hover,.code b[role=button]:focus{background:#e4e8ef;outline:none}
+
+/* 답글과 멘션 */
+#replying{display:flex;align-items:center;gap:8px;margin:0 14px 6px;padding:7px 9px;border-left:3px solid #2563eb;background:#f1f4fa;border-radius:4px;font-size:12px}
+#replyText{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#4b5563}
+#replyClear{font-size:11px;padding:1px 7px;flex:none}
+#mentionMenu{display:flex;gap:5px;flex-wrap:wrap;padding:4px 14px 8px}
+.mention-option{font-size:12px;padding:3px 8px;border-radius:14px}
+.mention{color:#2563eb;font-weight:700}
+.me .mention{color:#dbeafe}
+.reply-quote{max-width:100%;display:flex;flex-direction:column;gap:1px;padding:4px 7px;border-left:3px solid #9ca3af;background:#f4f5f6;border-radius:4px;font-size:11px;color:#5b6470}
+.reply-quote-name{font-weight:700}
+.reply-quote-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+
+/* 메시지 이모지 반응 */
+.message-actions{display:flex;align-items:center;gap:5px;position:relative;min-height:20px}
+.message-actions button{border:0;background:transparent;padding:1px 5px;font-size:11px;color:#7b8490}
+.message-actions button:hover{background:#e9edf2}
+.emoji-picker{display:flex;align-items:center;gap:2px;padding:3px 5px;background:#fff;border:1px solid #dfe3e8;border-radius:18px;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.emoji-picker button{font-size:15px;padding:2px 4px}
+.reaction-row{display:flex;flex-wrap:wrap;gap:4px}
+.reaction-chip{border:1px solid #d0d7e2;border-radius:14px;background:#fff;padding:1px 7px;font-size:11px;line-height:1.5}
+.reaction-chip.selected{border-color:#2563eb;background:#eaf1ff;color:#1d4ed8}
+@media (max-width:700px){
+  #roomp{max-height:42vh}
+  .reply-quote-text{max-width:190px}
+  .message-actions button{padding:2px 6px}
+}
