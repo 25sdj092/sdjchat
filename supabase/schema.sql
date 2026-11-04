@@ -373,11 +373,11 @@ end $$;
 
 create or replace function public.list_open_rooms()
 returns table (
-  id uuid, name text, owner_id uuid, member_count bigint,
+  id uuid, name text, member_count bigint,
   recent_messages bigint, last_message_at timestamptz
 )
 language sql stable security definer set search_path = public as $$
-  select c.id, c.name, c.owner_id,
+  select c.id, c.name,
     (select count(*) from public.conversation_members cm
       where cm.conversation_id = c.id and cm.left_at is null) as member_count,
     (select count(*) from public.messages m
