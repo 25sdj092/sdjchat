@@ -912,7 +912,7 @@ async function initPush() {       // 로그인 직후: 권한 팝업은 띄우�
   if (Notification.permission === 'granted' && !pushOff()) enablePush();
   else { try { await getReg(); } catch (e) {} refreshNb(); }       // Service Worker 는 항상 등록해 둔다
 }
-remove test push function/* 앱이 열려 있을 때의 알림 (Realtime 으로 받은 새 메시지). 같은 tag 를 써서 서버 푸시와 합쳐진다. */
+/* 앱이 열려 있을 때의 알림 (Realtime 으로 받은 새 메시지). 같은 tag 를 써서 서버 푸시와 합쳐진다. */
 function kickPush(id) {           // 보낸 사람 앱이 서버에 알림 발송을 요청 (DB 트리거가 막혀도 알림이 가도록). 서버가 중복을 걸러낸다.
   try { sb.functions.invoke('send-push', { body: { message_id: id } }).then(noop, noop); } catch (e) {}
 }
