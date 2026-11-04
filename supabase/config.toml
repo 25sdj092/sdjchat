@@ -1,16 +1,7 @@
-# Supabase CLI project configuration.
-# Link this local project with: supabase link --project-ref tunrakwqldpcxrtbdeuq
-project_id = "sdjchat"
+# Supabase CLI 설정 (함수 배포용). `supabase functions deploy send-push` 시 아래 설정이 적용됩니다.
+project_id = "tunrakwqldpcxrtbdeuq"
 
-[api]
-enabled = true
-schemas = ["public", "graphql_public"]
-extra_search_path = ["public", "extensions"]
-max_rows = 1000
-
-[db]
-major_version = 17
-
+# DB 트리거(pg_net)는 로그인 토큰 없이 이 함수를 호출하므로 게이트웨이의 JWT 검증을 끈다.
+# 대신 함수 코드가 직접 인증한다: (1) Vault 의 webhook secret 또는 (2) 메시지 발신자의 로그인 토큰.
 [functions.send-push]
-# The function validates either the user's bearer token or the internal webhook secret itself.
 verify_jwt = false

@@ -30,7 +30,7 @@
       <button id="roomb" type="button">방 만들기</button>
       <button id="nb" type="button">알림 켜기</button>
     </div>
-    <p id="nst" hidden></p>
+    <div id="nrow" hidden><span id="nst"></span><button id="ntest" type="button" hidden>테스트</button></div>
     <form id="addp" hidden autocomplete="off">
       <div class="row">
         <input id="ac" inputmode="numeric" maxlength="4" placeholder="친구 코드 4자리" aria-label="친구 코드">
@@ -84,10 +84,11 @@
   </main>
 </div>
 
+<div id="toast" hidden></div>
 <div id="lb" hidden><img alt="사진"></div>
 
 <script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="supabase.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
