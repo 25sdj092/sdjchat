@@ -191,6 +191,9 @@ before insert on public.messages
 for each row
 execute function public.validate_message_interactions();
 
+create unique index if not exists messages_id_conversation_uq
+  on public.messages(id, conversation_id);
+
 create table if not exists public.message_reactions (
   conversation_id uuid not null references public.conversations(id) on delete cascade,
   message_id uuid not null,
@@ -202,9 +205,6 @@ create table if not exists public.message_reactions (
     foreign key (message_id, conversation_id)
     references public.messages(id, conversation_id) on delete cascade
 );
-
-create unique index if not exists messages_id_conversation_uq
-  on public.messages(id, conversation_id);
 
 alter table public.message_reactions enable row level security;
 revoke all on public.message_reactions from public, anon, authenticated;
