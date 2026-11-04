@@ -636,6 +636,7 @@ create policy messages_select on public.messages for select to authenticated
 drop policy if exists messages_insert on public.messages;
 create policy messages_insert on public.messages for insert to authenticated
   with check (sender_id = (select auth.uid()) and private.is_active_member(conversation_id));
+grant insert on table public.messages to authenticated;
 drop policy if exists chat_images_insert on storage.objects;
 create policy chat_images_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'chat-images' and private.can_access_chat_object(name));
