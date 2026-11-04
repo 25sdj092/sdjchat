@@ -26,7 +26,8 @@ alter table public.conversations
 alter table public.conversations drop column if exists room_code;
 alter table public.conversations
   add column if not exists created_by uuid references public.profiles(id) on delete cascade,
-  add column if not exists last_message_at timestamptz;
+  add column if not exists last_message_at timestamptz,
+  add column if not exists member_count_updated_at timestamptz;
 alter table public.conversations
   add constraint conversations_type_check check (type in ('direct','open')),
   add constraint conversations_shape_check check (
@@ -174,6 +175,17 @@ drop trigger if exists messages_touch_open_room on public.messages;
 create trigger messages_touch_open_room after insert on public.messages
   for each row execute function private.touch_open_room_activity();
 
+create or replace function private.touch_open_room_members()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  update public.conversations set member_count_updated_at = now()
+    where id = new.conversation_id and type = 'open';
+  return new;
+end $$;
+drop trigger if exists members_touch_open_room on public.conversation_members;
+create trigger members_touch_open_room after insert or update of left_at on public.conversation_members
+  for each row execute function private.touch_open_room_members();
+
 -- 오픈채팅 행은 로그인 사용자 모두에게 공개하되, 메시지/참여자 데이터는 기존 RLS를 유지한다.
 drop policy if exists conversations_select on public.conversations;
 create policy conversations_select on public.conversations for select to authenticated
@@ -196,5 +208,6 @@ revoke all on function public.create_open_room(text), public.join_open_room(uuid
 grant execute on function public.create_open_room(text), public.join_open_room(uuid),
   public.leave_open_room(uuid), public.list_open_rooms() to authenticated;
 revoke all on function private.touch_open_room_activity() from public, anon, authenticated;
+revoke all on function private.touch_open_room_members() from public, anon, authenticated;
 
 commit;
