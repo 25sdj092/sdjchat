@@ -397,6 +397,8 @@ language sql stable security definer set search_path = public as $$
   limit 100
 $$;
 
+create schema if not exists private;
+
 create or replace function private.touch_open_room_activity()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
