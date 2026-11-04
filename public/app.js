@@ -1073,9 +1073,26 @@ async function start() {
 function init() {
   msEl = $('ms'); inp = $('inp');
 
+  var nameInput = $('nm');
+  var nameComposing = false;
+  function cleanNameInput(input) {
+    input.value = input.value.replace(/[^가-힣0-9]/g, '').slice(0, 12);
+  }
+  nameInput.addEventListener('compositionstart', function () {
+    nameComposing = true;
+  });
+  nameInput.addEventListener('compositionend', function () {
+    nameComposing = false;
+    cleanNameInput(this);
+  });
+  nameInput.addEventListener('input', function (e) {
+    // 한글 IME 조합 중에는 중간 자모를 지우지 않는다.
+    if (nameComposing || e.isComposing) return;
+    cleanNameInput(this);
+  });
   $('rf').addEventListener('submit', function (e) {
     e.preventDefault();
-    var name = $('nm').value;
+    var name = nameInput.value;
     if (!/^[가-힣0-9]{1,12}$/.test(name)) {
       $('rs').textContent = '이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.';
       return;
@@ -1083,7 +1100,6 @@ function init() {
     register(name);
   });
   $('cp').addEventListener('click', function () { copyText(me.code, $('cp')); });
-  $('nm').addEventListener('input', function () { this.value = this.value.replace(/[^가-힣0-9]/g, '').slice(0, 12); });
   $('lo').addEventListener('click', logout);
   $('nb').addEventListener('click', onNbClick);
   $('addb').addEventListener('click', function () {
