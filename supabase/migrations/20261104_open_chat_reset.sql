@@ -7,6 +7,11 @@ begin;
 delete from public.conversations;
 delete from auth.users;
 delete from public.push_deliveries;
+-- 기존 코드 기반 그룹방 RPC를 제거한다.
+drop function if exists public.create_room(text);
+drop function if exists public.join_room(text);
+drop function if exists public.leave_room(uuid);
+
 delete from public.join_failures;
 drop table if exists public.join_failures;
 
@@ -37,11 +42,6 @@ alter table public.conversations
   );
 create unique index if not exists conversations_open_creator_uq
   on public.conversations(created_by) where type = 'open';
-
--- 기존 코드 기반 그룹방 RPC를 제거한다.
-drop function if exists public.create_room(text);
-drop function if exists public.join_room(text);
-drop function if exists public.leave_room(uuid);
 
 -- 회원가입 이름 검증은 DB에서도 강제한다.
 create or replace function public.create_profile(p_name text)
