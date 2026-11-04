@@ -69,8 +69,8 @@ create table if not exists public.messages (
        and storage_path is null and mime_type is null and file_size is null)
     or
     (message_type = 'image'
-       and storage_path ~ ('^' || conversation_id::text || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$')
-       and mime_type in ('image/jpeg','image/png','image/webp')
+       and storage_path ~ ('^' || conversation_id::text || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.](jpg|png|webp|gif)$')
+       and mime_type in ('image/jpeg','image/png','image/webp','image/gif')
        and file_size between 1 and 10485760)
   )
 );
@@ -553,11 +553,11 @@ grant execute on function
 -- 8. Storage: 비공개 버킷 + 정책 (10MB, JPEG/PNG/WebP, 채팅 참여자만)
 -- ---------------------------------------------------------------------
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('chat-images', 'chat-images', false, 10485760, array['image/jpeg', 'image/png', 'image/webp'])
+values ('chat-images', 'chat-images', false, 10485760, array['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 on conflict (id) do update
   set public = false,
       file_size_limit = 10485760,
-      allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp'];
+      allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 drop policy if exists chat_images_insert on storage.objects;
 create policy chat_images_insert on storage.objects for insert to authenticated
@@ -613,7 +613,7 @@ create or replace function private.can_access_chat_object(p_name text)
 returns boolean language plpgsql stable security definer set search_path = public as $$
 begin
   if p_name is null or p_name !~
-    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$'
+    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.](jpg|png|webp|gif)$'
   then return false; end if;
   return private.is_active_member(split_part(p_name, '/', 1)::uuid);
 end $$;
