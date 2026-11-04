@@ -455,7 +455,7 @@ function setReplyInput(m) {
   if (!m || !m.seq) return hint('전송이 완료된 메시지에만 답글을 달 수 있습니다.');
   replyTarget = m;
   var c = convs.get(m.conversation_id);
-  var preview = m.message_type === 'image' ? '사진' : String(m.content || '').replace(/\\s+/g, ' ').trim();
+  var preview = m.message_type === 'image' ? '사진' : String(m.content || '').replace(/\s+/g, ' ').trim();
   $('replyText').textContent = nameOf(c, m.sender_id) + ': ' + preview.slice(0, 90);
   $('replying').hidden = false;
   hideMentionMenu();
@@ -488,7 +488,7 @@ function updateMentionMenu() {
   var menu = $('mentionMenu'), c = convs.get(active);
   if (!menu || !c) { hideMentionMenu(); return; }
   var cursor = inp.selectionStart || 0, before = inp.value.slice(0, cursor);
-  var match = /(^|\\s)@([가-힣0-9]{0,12})$/.exec(before);
+  var match = /(^|\s)@([가-힣0-9]{0,12})$/.exec(before);
   if (!match) { hideMentionMenu(); return; }
   var query = match[2], candidates = activeMembers(c).filter(function (m) {
     return m.id !== me.id && m.name.indexOf(query) === 0;
@@ -650,7 +650,7 @@ function fitInput() {
 }
 function newMsg(type) {
   var target = replyTarget, c = convs.get(active);
-  var replyPreview = target ? (target.message_type === 'image' ? '사진' : String(target.content || '').replace(/\\s+/g, ' ').trim().slice(0, 90)) : null;
+  var replyPreview = target ? (target.message_type === 'image' ? '사진' : String(target.content || '').replace(/\s+/g, ' ').trim().slice(0, 90)) : null;
   return { id: uuid(), seq: null, conversation_id: active, sender_id: me.id, content: '', message_type: type,
            storage_path: null, mime_type: null, file_size: null,
            reply_to: target ? target.id : null, reply_sender_id: target ? target.sender_id : null,
