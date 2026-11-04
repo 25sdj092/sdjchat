@@ -39,17 +39,10 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .code button{padding:2px 8px;font-size:12px;margin-left:auto}
 .acts{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid #e3e5e8}
 .acts button{flex:1;min-width:0;padding:6px 2px;font-size:13px;white-space:nowrap}
-#nrow{display:flex;align-items:flex-start;gap:8px;padding:6px 14px;border-bottom:1px solid #e3e5e8;font-size:12px}
-#nst{flex:1;min-width:0;color:#6b7280;word-break:keep-all;line-height:1.4}
-#nst.ok{color:#15803d}
-#nst.warn{color:#b45309}
-#nst.bad{color:#c0392b}
-#ntest{flex:none;padding:1px 8px;font-size:12px}
 #toast{position:fixed;top:12px;right:12px;z-index:9;max-width:300px;padding:10px 12px;background:#1f2328;color:#fff;border-radius:8px;font-size:13px;cursor:pointer;word-break:keep-all}
 #toast b{display:block;margin-bottom:2px}
 #addp,#roomp{padding:10px 14px;border-bottom:1px solid #e3e5e8}
 .row{display:flex;gap:8px}
-#roomp .row+.row{margin-top:8px}
 .row input{flex:1;min-width:0;font-size:16px}
 #ast,#rst{margin-top:6px;font-size:12px;color:#6b7280;min-height:18px;word-break:keep-all}
 #rq{border-bottom:1px solid #e3e5e8}
@@ -58,10 +51,13 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 #rql .nm{flex:1;min-width:0;font-weight:400}
 #rql button{padding:2px 8px;font-size:12px}
 #lists{flex:1;overflow-y:auto;min-height:0}
-#rh{font-size:12px;font-weight:600;color:#6b7280;padding:8px 14px 4px;border-bottom:1px solid #e3e5e8}
+#fh,#rh{font-size:12px;font-weight:600;color:#6b7280;padding:8px 14px 4px;border-bottom:1px solid #e3e5e8}
 .fr{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #e3e5e8;cursor:pointer}
 .fr:hover{background:#eef0f2}
 .fr.sel{background:#e6edfc}
+.fr.open-room{border-left:3px solid transparent}
+.fr.open-room.hot{border-left:4px solid #d97706;background:#fff8e8}
+.fr .join-state{flex:none;color:#2563eb;font-size:12px;font-weight:600}
 .fr .info{flex:1;min-width:0}
 .fr .c{font-size:12px;color:#6b7280}
 .bd{background:#2563eb;color:#fff;border-radius:8px;min-width:18px;padding:0 6px;font-size:12px;text-align:center}
