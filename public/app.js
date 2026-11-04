@@ -66,7 +66,7 @@ function activeMembers(c) {
   return a;
 }
 function convName(c) {
-  if (c.type === 'open') return c.name;
+  if (c.type === 'open' || c.type === 'group') return c.name;
   var o = otherOf(c);
   return o ? o.name : '알 수 없음';
 }
@@ -383,7 +383,7 @@ function addEntry(m) {
   var d = el('div', 'm' + (mine ? ' me' : ''));
   d.dataset.id = m.id;
   var col = el('div', 'col'), sn = null, pg = null;
-  if (!mine && c && c.type === 'open') { sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn); }
+  if (!mine && c && (c.type === 'open' || c.type === 'group')) { sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn); }
   var b = el('div', 'b');
   if (m.message_type === 'image') {
     b.className = 'b img';
@@ -1083,7 +1083,7 @@ async function notifyIncoming(c, m) {
   notified.add(m.id);
   if (notified.size > 300) notified.delete(notified.values().next().value);
   var sender = nameOf(c, m.sender_id);
-  var title = c.type === 'open' ? sender + ' · ' + c.name : sender;
+  var title = (c.type === 'open' || c.type === 'group') ? sender + ' · ' + c.name : sender;
   var body = m.message_type === 'image' ? '사진을 보냈습니다.' : String(m.content).replace(/\s+/g, ' ').trim().slice(0, 80);
   var done = false;
   if (pushOk() && Notification.permission === 'granted') {
