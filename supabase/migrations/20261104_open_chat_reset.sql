@@ -8,6 +8,7 @@ delete from public.conversations;
 delete from auth.users;
 delete from public.push_deliveries;
 delete from public.join_failures;
+drop table if exists public.join_failures;
 
 -- 새 이름 규칙: 한글 완성형 음절 + 숫자, 1~12자
 alter table public.profiles drop constraint if exists profiles_username_length_chk;
