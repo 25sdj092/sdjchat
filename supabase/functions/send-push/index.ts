@@ -184,25 +184,45 @@ Deno.serve(async (req) => {
     callerId = user.id;
   }
 
+  // messages -> profiles 관계가 sender_id와 reply_sender_id 두 개이므로 PostgREST
+  // 임베디드 관계를 생략하고 ID로 각각 조회한다. 관계 모호성에 의한 500을 방지한다.
   const { data: msg, error: e1 } = await admin
     .from("messages")
-    .select("id, conversation_id, sender_id, content, message_type, profiles(username), conversations(type, name)")
+    .select("id, conversation_id, sender_id, content, message_type")
     .eq("id", messageId).maybeSingle();
-  if (e1) return json({ error: "db_error" }, 500);
+  if (e1) {
+    console.error("push message lookup failed", e1.code, e1.message, e1.details, e1.hint);
+    return json({ error: "db_error", stage: "message" }, 500);
+  }
   if (!msg) return json({ sent: 0, reason: "message_not_found" });
   // 앱에서 호출한 경우, 자기가 보낸 메시지에 대해서만 발송을 요청할 수 있다.
   if (source === "client" && msg.sender_id !== callerId) return json({ error: "forbidden" }, 403);
 
+  const [senderResult, conversationResult] = await Promise.all([
+    admin.from("profiles").select("username").eq("id", msg.sender_id).maybeSingle(),
+    admin.from("conversations").select("type, name").eq("id", msg.conversation_id).maybeSingle(),
+  ]);
+  if (senderResult.error) {
+    console.error("push sender lookup failed", senderResult.error.code, senderResult.error.message);
+    return json({ error: "db_error", stage: "sender" }, 500);
+  }
+  if (conversationResult.error) {
+    console.error("push conversation lookup failed", conversationResult.error.code, conversationResult.error.message);
+    return json({ error: "db_error", stage: "conversation" }, 500);
+  }
+  const senderProfile = senderResult.data;
+  const conversation = conversationResult.data;
+
   const { data: members, error: e2 } = await admin
     .from("conversation_members").select("user_id")
     .eq("conversation_id", msg.conversation_id).is("left_at", null).neq("user_id", msg.sender_id);
-  if (e2) return json({ error: "db_error" }, 500);
+  if (e2) { console.error("push member lookup failed", e2.code, e2.message); return json({ error: "db_error", stage: "members" }, 500); }
   const userIds = (members ?? []).map((m) => m.user_id);
   if (!userIds.length) return json({ sent: 0, reason: "no_recipients" });
 
   const { data: subs, error: e3 } = await admin
     .from("push_subscriptions").select("id, subscription").in("user_id", userIds);
-  if (e3) return json({ error: "db_error" }, 500);
+  if (e3) { console.error("push subscription lookup failed", e3.code, e3.message); return json({ error: "db_error", stage: "subscriptions" }, 500); }
   if (!subs?.length) return json({ sent: 0, reason: "no_subscriptions" });
 
   // 같은 메시지는 한 번만 발송한다. (트리거와 앱 호출이 겹치거나 이벤트가 중복돼도 안전)
@@ -220,13 +240,13 @@ Deno.serve(async (req) => {
   }
 
   // deno-lint-ignore no-explicit-any
-  const sender = (msg as any).profiles?.username ?? "새 메시지";
-  // deno-lint-ignore no-explicit-any
-  const conv = (msg as any).conversations;
-  const title = (conv?.type === "open" || conv?.type === "group") ? `${sender} · ${conv.name}` : sender;
+  const sender = senderProfile?.username ?? "새 메시지";
+  const title = (conversation?.type === "open" || conversation?.type === "group") ? `${sender} · ${conversation.name}` : sender;
   const notificationBody = msg.message_type === "image"
     ? "사진을 보냈습니다."
-    : String(msg.content).replace(/\s+/g, " ").trim().slice(0, 80);
+    : msg.message_type === "gif"
+      ? "GIF를 보냈습니다."
+      : String(msg.content).replace(/\s+/g, " ").trim().slice(0, 80);
   const payload = JSON.stringify({ title, body: notificationBody, c: msg.conversation_id, tag: msg.id });
 
   try {
