@@ -52,7 +52,7 @@ Supabase Dashboard에서 다음 페이지를 열고 **Anonymous Sign-Ins**를 �
 - 공개 오픈채팅 목록, 참가, 나가기 RPC
 - 사용자당 오픈채팅 생성 1개 제한
 - 읽음 숫자 계산 RPC
-- `chat-images` 비공개 Storage 버킷: JPEG/PNG/WebP, 파일당 10 MiB
+- `chat-images` 비공개 Storage 버킷: JPEG/PNG/WebP/GIF, 파일당 10 MiB (이전 GIF 첨부 메시지 호환)
 - `messages`, `conversation_members`, `friendships`, `conversations` Realtime 등록
 - 새 메시지 DB trigger와 `send-push` Edge Function
 
@@ -122,6 +122,7 @@ select id, status_code, error_msg, left(content::text, 200) as content, created 
    - `supabase/migrations/20261104_chat_interaction_indexes.sql`
    - `supabase/migrations/20261104_chat_message_insert_permission.sql`
    - `supabase/migrations/20261105_allow_chat_gif.sql`
+   - `supabase/migrations/20261105_giphy_gif_messages.sql`
 5. `supabase/functions/send-push/index.ts`를 `send-push`로 배포 (`supabase/config.toml` 에 `verify_jwt=false` 가 지정되어 있음; 함수가 별도 인증을 수행)
 6. 프로젝트 URL 및 Publishable Key를 `public/config.js` 또는 Vercel 빌드 환경변수에 입력
 
@@ -163,7 +164,7 @@ SQL 스키마는 비공개 `chat-images` 버킷, Storage 정책, RLS, Realtime �
 - **방 만들기**와 **방 추가**를 서로 다른 버튼과 패널로 분리
 - 친구 추가 버튼은 내 4자리 코드 오른쪽에 배치
 - 내 4자리 코드는 숫자 자체를 클릭하거나 키보드로 선택해 복사
-- 채팅에 JPEG/PNG/WebP/GIF 파일 첨부 가능. GIF는 원본 애니메이션 유지
+- 사진은 JPEG/PNG/WebP 파일로 첨부하고, GIF 버튼에서는 GIPHY 검색·인기 GIF를 골라 메시지로 전송 가능
 - 메시지의 `http://`, `https://`, `www.` URL은 클릭 가능한 링크로 표시
 - 메시지에 👍 ❤️ 😂 😮 😢 🎉 반응을 추가하거나 취소 가능
 - 메시지별 답글과 답글 미리보기 지원
@@ -175,3 +176,13 @@ SQL 스키마는 비공개 `chat-images` 버킷, Storage 정책, RLS, Realtime �
 - 일반 참여자는 방에서 나갈 수 있으며, DM 목록은 Supabase Realtime Presence로 온라인/오프라인 표시
 
 운영 적용 마이그레이션: `supabase/migrations/20261104_profile_rooms_presence.sql`
+
+
+## GIPHY GIF 검색
+
+- 채팅 입력창의 **GIF** 버튼에서 인기 GIF 또는 검색어로 찾은 GIF를 선택해 전송합니다.
+- GIF 파일을 Supabase Storage에 업로드하지 않습니다. GIPHY가 제공한 HTTPS 미디어 URL을 메시지 내용으로 전송합니다.
+- GIPHY API는 브라우저에서 직접 호출하며, 검색 결과·미디어 URL을 앱 서버로 프록시하지 않습니다.
+- GIPHY API 키는 브라우저에 전달되는 공개 키입니다. 비밀 키로 취급할 수 없으며 공개 설정 파일에 포함됩니다.
+- GIF 선택창에는 GIPHY 출처 표시를 둡니다. GIPHY Beta 키는 시간당 100회 API 요청 제한이 있으므로 검색 버튼이나 Enter로 필요한 검색만 실행하세요.
+
