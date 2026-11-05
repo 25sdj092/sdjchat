@@ -7,7 +7,7 @@ var PAGE = 30;                   // 한 번에 불러오는 메시지 수
 var DOM_CAP = 300;               // 화면에 유지하는 최대 말풍선 수
 var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
-var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at,reply_to,reply_sender_id,reply_preview,mention_user_ids';
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -729,14 +729,28 @@ function retryFailed() {
 }
 
 /* 사진 */
+function imageMimeOf(f) {
+  var type = String(f.type || '').toLowerCase();
+  if (EXT[type]) return type;
+  // 일부 Chromebook 파일 앱은 MIME을 비워서 전달하므로 파일 확장자로 보완한다.
+  if (!type || type === 'application/octet-stream') {
+    var name = String(f.name || '').toLowerCase();
+    if (/\.jpe?g$/.test(name)) return 'image/jpeg';
+    if (/\.png$/.test(name)) return 'image/png';
+    if (/\.webp$/.test(name)) return 'image/webp';
+    if (/\.gif$/.test(name)) return 'image/gif';
+  }
+  return null;
+}
 function sendImage(f) {
   if (!active) return;
-  if (!EXT[f.type]) return hint('JPEG, PNG, WebP 사진만 보낼 수 있습니다. GIF는 GIF 버튼에서 검색하세요.');
-  if (f.size > MAX_IMG) return hint('사진은 10MB 이하만 보낼 수 있습니다. (' + (f.size / 1048576).toFixed(1) + 'MB)');
+  var mime = imageMimeOf(f);
+  if (!mime) return hint('JPEG, PNG, WebP, GIF 파일만 보낼 수 있습니다.');
+  if (f.size > MAX_IMG) return hint('사진과 GIF는 10MB 이하만 보낼 수 있습니다. (' + (f.size / 1048576).toFixed(1) + 'MB)');
   if (f.size < 1) return hint('빈 파일입니다.');
   var m = newMsg('image');
-  m.storage_path = active + '/' + uuid() + '.' + EXT[f.type];
-  m.mime_type = f.type; m.file_size = f.size; m._file = f; m._blob = URL.createObjectURL(f); m._p = 0;
+  m.storage_path = active + '/' + uuid() + '.' + EXT[mime];
+  m.mime_type = mime; m.file_size = f.size; m._file = f; m._blob = URL.createObjectURL(f); m._p = 0;
   clearReplyInput(); hideMentionMenu(); hint('');
   appendMsg(m);
   upload(m);
