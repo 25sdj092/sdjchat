@@ -26,8 +26,8 @@
       <div class="code">내 코드 <b id="myc" role="button" tabindex="0" title="숫자를 클릭하면 복사됩니다."></b><button id="addb" type="button">+ 친구 추가</button></div>
     </div>
     <div class="acts">
-      <button id="roomb" type="button">방 만들기</button>
-      <button id="joinb" type="button">방 추가</button>
+      <button id="roomb" type="button">방 생성</button>
+      <button id="joinb" type="button">방 입장</button>
       <button id="nb" type="button">알림 켜기</button>
     </div>
     <form id="addp" hidden autocomplete="off">
@@ -38,11 +38,9 @@
       <p id="ast"></p>
     </form>
     <div id="roomp" hidden>
-      <div class="roomp-head"><strong>방 만들기</strong><button id="roomClose" type="button">닫기</button></div>
-      <p class="room-guide">원하는 방식의 방을 선택하세요.</p>
+      <div class="roomp-head"><strong>방 생성</strong><button id="roomClose" type="button">닫기</button></div>
       <section class="room-card">
         <div class="room-card-title">오픈채팅 만들기</div>
-        <p>오픈채팅 목록에 공개됩니다. 다른 사용자도 목록에서 찾아 참가할 수 있습니다.</p>
         <form id="rmk" class="room-form" autocomplete="off">
           <input id="rn" maxlength="30" placeholder="오픈채팅방 이름" aria-label="오픈채팅방 이름">
           <button id="rmkb" class="pri" type="submit">오픈채팅 만들기</button>
@@ -50,7 +48,6 @@
       </section>
       <section class="room-card">
         <div class="room-card-title">6자리 코드방 만들기</div>
-        <p>방을 만든 뒤 발급되는 6자리 코드를 알려준 사람만 참가할 수 있습니다.</p>
         <form id="gmk" class="room-form" autocomplete="off">
           <input id="grn" maxlength="30" placeholder="코드방 이름" aria-label="코드방 이름">
           <button id="grmb" class="pri" type="submit">코드 발급 및 만들기</button>
@@ -59,7 +56,7 @@
       <p id="rst"></p>
     </div>
     <div id="joinp" hidden>
-      <div class="roomp-head"><strong>방 추가</strong><button id="joinClose" type="button">닫기</button></div>
+      <div class="roomp-head"><strong>방 입장</strong><button id="joinClose" type="button">닫기</button></div>
       <p class="room-guide">초대받은 6자리 방 코드를 입력하면 해당 방에 참가합니다.</p>
       <form id="cjn" class="room-form" autocomplete="off">
         <input id="rc" inputmode="numeric" maxlength="6" placeholder="6자리 방 코드" aria-label="방 코드">
@@ -99,8 +96,9 @@
       <div id="replying" hidden><span id="replyText"></span><button id="replyClear" type="button" aria-label="답글 취소">취소</button></div>
       <div id="mentionMenu" hidden></div>
       <form id="cf">
-        <button id="at" type="button" aria-label="사진 및 GIF 첨부">사진/GIF</button>
-        <input id="fi" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
+        <button id="at" type="button" aria-label="사진 첨부">사진</button>
+        <button id="gifb" type="button" aria-label="GIF 검색">GIF</button>
+        <input id="fi" type="file" accept="image/jpeg,image/png,image/webp" hidden>
         <textarea id="inp" rows="1" maxlength="2000" placeholder="메시지 입력" aria-label="메시지"></textarea>
         <button id="sd" class="pri" type="submit">전송</button>
       </form>
@@ -110,6 +108,15 @@
 
 <div id="toast" hidden></div>
 <div id="lb" hidden><img alt="사진"></div>
+<div id="gifPicker" hidden role="dialog" aria-modal="true" aria-label="GIF 검색">
+  <section class="gif-panel">
+    <div class="gif-head"><strong>GIF 검색</strong><button id="gifClose" type="button">닫기</button></div>
+    <div class="gif-search"><input id="gifQuery" maxlength="80" placeholder="검색어 입력" aria-label="GIF 검색어"><button id="gifSearchBtn" class="pri" type="button">검색</button></div>
+    <div id="gifStatus" role="status"></div>
+    <div id="gifGrid"></div>
+    <div class="gif-foot"><a href="https://giphy.com" target="_blank" rel="noopener noreferrer">Powered by GIPHY</a><button id="gifMore" type="button" hidden>더 보기</button></div>
+  </section>
+</div>
 
 <script src="config.js"></script>
 <script src="supabase.js"></script>
