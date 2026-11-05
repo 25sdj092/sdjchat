@@ -84,6 +84,14 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 #pl .pc b{color:#1f2328;letter-spacing:2px}
 #pl .pc button{padding:1px 8px;font-size:12px}
 #pl li{display:flex;align-items:center;gap:8px;padding:3px 0}
+#pins{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 12px;border-bottom:1px solid #e3e5e8;background:#f6f7f8}
+.pins-label{font-size:11px;font-weight:700;color:#6b7280;flex:none}
+.pin-item{display:flex;align-items:center;max-width:min(360px,48%);border:1px solid #d9e0ea;border-radius:6px;background:#fff;overflow:hidden}
+.pin-jump{border:0;background:transparent;padding:4px 7px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;text-align:left}
+.pin-remove{border:0;border-left:1px solid #e5e7eb;border-radius:0;padding:2px 6px;font-size:14px;color:#8a9097}
+.pin-btn{font-size:11px}
+.system-event{align-self:center;max-width:90%;margin:5px auto;padding:4px 10px;border-radius:12px;background:#f1f3f5;color:#737b85;font-size:11px;text-align:center}
+.pinned-focus{outline:2px solid #f0b429;outline-offset:2px;border-radius:8px}
 .kick-member{margin-left:auto;padding:1px 7px;font-size:11px;color:#b91c1c;border-color:#fecaca;flex:none}
 .kick-member:hover{background:#fef2f2}
 #pl .own{color:#2563eb;font-size:12px;margin-left:4px}
@@ -129,7 +137,9 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 }
 
 #rnm{font-size:12px;padding:2px 8px}
-#lv{font-size:12px;padding:2px 8px}
+#lv,#bl{font-size:12px;padding:2px 8px}
+#bl{border-color:#f0b7b7;color:#b91c1c}
+#bl:hover{background:#fef2f2}
 
 /* 방 생성 패널 */
 #roomp{max-height:48vh;overflow-y:auto}
