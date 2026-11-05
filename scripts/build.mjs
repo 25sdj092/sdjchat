@@ -1,18 +1,26 @@
 // Vercel 빌드: 환경변수 → public/config.js 생성. (외부 패키지 없음)
 // 프런트엔드에는 공개 가능한 값만 들어간다. 비밀 키가 감지되면 빌드를 중단한다.
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const env = process.env;
-const url = (env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
-const key = (env.SUPABASE_ANON_KEY || env.SUPABASE_PUBLISHABLE_KEY || '').trim();
-const vapid = (env.VAPID_PUBLIC_KEY || '').trim();
+const configPath = join(root, 'public', 'config.js');
+let existing = {};
+try {
+  const source = readFileSync(configPath, 'utf8');
+  const match = source.match(/window\.APP_CONFIG\s*=\s*(\{[\s\S]*?\})\s*;/);
+  if (match) existing = JSON.parse(match[1]);
+} catch { /* 최초 설치이거나 파일이 없으면 환경변수만 사용 */ }
+const url = (env.SUPABASE_URL || existing.supabaseUrl || '').trim().replace(/\/+$/, '');
+const key = (env.SUPABASE_ANON_KEY || env.SUPABASE_PUBLISHABLE_KEY || existing.supabaseAnonKey || '').trim();
+const vapid = (env.VAPID_PUBLIC_KEY || existing.vapidPublicKey || '').trim();
+const giphy = (env.GIPHY_API_KEY || existing.giphyApiKey || '').trim();
 
 function fail(msg) { console.error('\n[build] ' + msg + '\n'); process.exit(1); }
 
-if (!url && !key && !vapid) {
+if (!url && !key && !vapid && !giphy) {
   console.log('[build] 환경변수가 없어 public/config.js 를 그대로 사용합니다.');
   process.exit(0);
 }
@@ -29,7 +37,7 @@ if (key.split('.').length === 3) {
 }
 if (vapid && !/^[A-Za-z0-9_-]{80,100}$/.test(vapid)) fail('VAPID_PUBLIC_KEY 형식이 올바르지 않습니다. (web-push generate-vapid-keys 의 Public Key)');
 
-const cfg = { supabaseUrl: url, supabaseAnonKey: key, vapidPublicKey: vapid };
-writeFileSync(join(root, 'public', 'config.js'),
+const cfg = { supabaseUrl: url, supabaseAnonKey: key, vapidPublicKey: vapid, giphyApiKey: giphy };
+writeFileSync(configPath,
   '/* 빌드 시 자동 생성됨 (공개 가능한 값만 포함) */\nwindow.APP_CONFIG = ' + JSON.stringify(cfg, null, 2) + ';\n');
 console.log('[build] public/config.js 생성 완료 (' + url + (vapid ? ', 푸시 활성' : ', 푸시 키 없음') + ')');
