@@ -227,3 +227,20 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 }
 
 #gifPicker[hidden],#gifMore[hidden]{display:none}
+
+
+/* 고정된 메시지는 본문 글자와 테두리를 키워 한눈에 구분한다. */
+.m.is-pinned .b:not(.img) {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 9px 12px;
+  border: 2px solid #d5a326;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.me.is-pinned .b:not(.img) {
+  border-color: #f5d36a;
+}
+@media (max-width:700px) {
+  .m.is-pinned .b:not(.img) { font-size: 17px; }
+}
