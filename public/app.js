@@ -711,6 +711,7 @@ async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전�
   if (r.error) {
     m._st = 'failed';
     en = shown.get(m.id); if (en) paint(en);
+    hint('메시지 전송 실패 (' + (r.error.code || '오류') + '): ' + (r.error.message || '다시 시도해 주세요.'));
     return;
   }
   m.seq = r.data.seq; m.created_at = r.data.created_at; m._st = 'sent'; m._file = null;
