@@ -32,6 +32,8 @@ var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld 
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
 var reactionsByMessage = new Map(), replyTarget = null;
+var blockedUsers = new Set(), blockedByUsers = new Set();
+var conversationPins = [], loadedEventIds = new Set();
 var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
 var listSections = { friends: true, openRooms: true };
 
@@ -238,7 +240,9 @@ async function loadAll() {
     sb.from('friendships').select('id,requester:profiles!friendships_requester_id_fkey(username,user_code)')
       .eq('receiver_id', me.id).eq('status', 'pending').order('created_at'),
     sb.rpc('conversation_summary'),
-    sb.rpc('list_open_rooms')
+    sb.rpc('list_open_rooms'),
+    sb.from('user_blocks').select('blocker_id,blocked_id')
+      .or('blocker_id.eq.' + me.id + ',blocked_id.eq.' + me.id)
   ]);
   for (var i = 0; i < res.length; i++) if (res[i].error) throw res[i].error;
 
@@ -258,6 +262,12 @@ async function loadAll() {
     if (c) { c.unread = Number(s.unread) || 0; c.lastAt = s.last_message_at; }
   });
   convs = next;
+  blockedUsers = new Set();
+  blockedByUsers = new Set();
+  (res[4].data || []).forEach(function (b) {
+    if (b.blocker_id === me.id) blockedUsers.add(b.blocked_id);
+    if (b.blocked_id === me.id) blockedByUsers.add(b.blocker_id);
+  });
   openRooms = res[3].data || [];
   reqs = (res[1].data || []).map(function (r) {
     return { id: r.id, name: r.requester ? r.requester.username : '알 수 없음', code: r.requester ? r.requester.user_code : '' };
@@ -276,6 +286,38 @@ function hint(t) {
   clearTimeout(hint._t);
   if (t) hint._t = setTimeout(function () { h.textContent = ''; }, 3500);
 }
+function isDirectBlocked(c) {
+  if (!c || c.type !== 'direct') return false;
+  var peer = otherOf(c);
+  return !!(peer && (blockedUsers.has(peer.id) || blockedByUsers.has(peer.id)));
+}
+function setComposerBlocked(c) {
+  var disabled = isDirectBlocked(c);
+  ['inp','sd','at','gifb'].forEach(function (id) {
+    if ($(id)) $(id).disabled = disabled;
+  });
+  if (inp) inp.placeholder = disabled ? '차단 상태에서는 메시지를 보낼 수 없습니다.' : '메시지 입력';
+}
+async function toggleBlockActive() {
+  var c = convs.get(active), peer = c && c.type === 'direct' ? otherOf(c) : null;
+  if (!peer) return;
+  var willBlock = !blockedUsers.has(peer.id);
+  if (!confirm(willBlock
+    ? peer.name + '님을 차단할까요? 서로 친구 관계가 해제되고 DM 전송과 친구 요청이 차단됩니다.'
+    : peer.name + '님의 차단을 해제할까요? 친구 관계는 자동으로 복원되지 않습니다.')) return;
+  $('bl').disabled = true;
+  var r = await sb.rpc('block_user', { p_user: peer.id, p_blocked: willBlock });
+  $('bl').disabled = false;
+  if (r.error) { hint('차단 설정을 변경하지 못했습니다.'); return; }
+  await reload();
+  if (active) updateHeader();
+  if (willBlock) {
+    await loadConversationEvents(active, loadTok);
+    hint(peer.name + '님을 차단했습니다.');
+  } else {
+    hint(peer.name + '님의 차단을 해제했습니다.');
+  }
+}
 function updateHeader() {
   var c = convs.get(active);
   if (!c) return;
@@ -287,8 +329,16 @@ function updateHeader() {
       (c.type === 'group' ? ' · 코드 ' + c.room_code : '') + (o ? ' · 방장 ' + o.name : '');
   } else {
     var p = otherOf(c);
-    $('cs').textContent = p ? '개인 DM · 코드 ' + p.code : '개인 DM';
+    var blockState = p && blockedUsers.has(p.id) ? ' · 내가 차단함' : (p && blockedByUsers.has(p.id) ? ' · 상대가 차단함' : '');
+    $('cs').textContent = (p ? '개인 DM · 코드 ' + p.code : '개인 DM') + blockState;
   }
+  var peer = c.type === 'direct' ? otherOf(c) : null;
+  $('bl').hidden = !peer;
+  if (peer) {
+    $('bl').textContent = blockedUsers.has(peer.id) ? '차단 해제' : '차단';
+    $('bl').disabled = blockedByUsers.has(peer.id) && !blockedUsers.has(peer.id);
+  }
+  setComposerBlocked(c);
 }
 function renderPanel() {
   var c = convs.get(active), box = $('pl');
@@ -345,9 +395,15 @@ function openChat(id) {
   updateHeader();
   hint('');
   shown = new Map(); queued = [];
+  conversationPins = [];
+  loadedEventIds = new Set();
   msEl.replaceChildren();
+  $('pins').replaceChildren();
+  $('pins').hidden = true;
   hasMore = false; stick = true; firstLoading = true;
-  loadLatest(id, ++loadTok);
+  var token = ++loadTok;
+  loadLatest(id, token);
+  loadPins(id, token);
   if (!isMobile()) inp.focus();
 }
 async function loadLatest(id, tok) {
@@ -372,6 +428,8 @@ async function loadLatest(id, tok) {
   q.forEach(appendMsg);
   outbox.forEach(function (m) { if (m.conversation_id === id) appendMsg(m); });   // 아직 못 보낸 메시지도 다시 표시
   msEl.scrollTop = msEl.scrollHeight; stick = true;
+  await loadConversationEvents(id, tok);
+  await loadPins(id, tok);
   scheduleRead();
   var current = convs.get(id);
   // 방에서는 첫 진입 시 최근 30개만 보여 주고, 위쪽 과거 기록은 사용자가 직접 올릴 때만 조회한다.
@@ -597,8 +655,11 @@ function addEntry(m) {
 
   var actions = el('div', 'message-actions');
   var replyBtn = el('button', 'reply-btn', '답글');
+  var pinBtn = el('button', 'pin-btn', '고정');
   var reactBtn = el('button', 'react-btn', '반응 +');
   replyBtn.type = 'button'; replyBtn.disabled = !m.seq;
+  pinBtn.type = 'button'; pinBtn.disabled = !m.seq;
+  pinBtn.addEventListener('click', function () { togglePinMessage(m); });
   reactBtn.type = 'button';
   replyBtn.addEventListener('click', function () { setReplyInput(m); });
   var picker = el('div', 'emoji-picker');
@@ -613,7 +674,7 @@ function addEntry(m) {
     picker.appendChild(eb);
   });
   reactBtn.addEventListener('click', function () { picker.hidden = !picker.hidden; });
-  actions.appendChild(replyBtn); actions.appendChild(reactBtn); actions.appendChild(picker);
+  actions.appendChild(replyBtn); actions.appendChild(pinBtn); actions.appendChild(reactBtn); actions.appendChild(picker);
   col.appendChild(actions);
   var reactionRow = el('div', 'reaction-row');
   reactionRow.hidden = true;
@@ -623,10 +684,11 @@ function addEntry(m) {
   rt.type = 'button'; rt.hidden = true;
   meta.appendChild(u); meta.appendChild(rt); meta.appendChild(t);
   d.appendChild(col); d.appendChild(meta);
-  var en = { m: m, el: d, sn: sn, u: u, rt: rt, t: t, pg: pg, reactionRow: reactionRow, picker: picker, replyBtn: replyBtn };
+  var en = { m: m, el: d, sn: sn, u: u, rt: rt, t: t, pg: pg, reactionRow: reactionRow, picker: picker, replyBtn: replyBtn, pinBtn: pinBtn };
   rt.addEventListener('click', function () { retry(en.m); });
   shown.set(m.id, en);
   renderReactionBar(en);
+  updatePinButton(en);
   paint(en);
   return d;
 }
@@ -655,6 +717,111 @@ function refreshNames() {
   shown.forEach(function (en) {
     if (en.sn) en.sn.textContent = nameOf(convs.get(en.m.conversation_id), en.m.sender_id);
   });
+}
+function isPinned(messageId) {
+  return conversationPins.some(function (p) { return p.message_id === messageId; });
+}
+function updatePinButton(en) {
+  if (!en || !en.pinBtn) return;
+  var pinned = isPinned(en.m.id);
+  en.pinBtn.textContent = pinned ? '고정 해제' : '고정';
+  en.pinBtn.title = pinned ? '고정 해제' : '이 메시지 고정';
+}
+function renderPins() {
+  var box = $('pins');
+  box.replaceChildren();
+  if (!conversationPins.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.appendChild(el('span', 'pins-label', '고정'));
+  conversationPins.forEach(function (pin) {
+    var msg = pin.message || {};
+    var preview = msg.message_type === 'image' ? '사진' : msg.message_type === 'gif' ? 'GIF' : String(msg.content || '메시지').replace(/\\s+/g, ' ').slice(0, 60);
+    var item = el('div', 'pin-item');
+    var jump = el('button', 'pin-jump', (nameOf(convs.get(active), msg.sender_id) || '메시지') + ' · ' + preview);
+    jump.type = 'button';
+    jump.addEventListener('click', function () { jumpToPinned(pin); });
+    var remove = el('button', 'pin-remove', '×');
+    remove.type = 'button'; remove.title = '고정 해제';
+    remove.addEventListener('click', function () { togglePinMessage({ id: pin.message_id }); });
+    item.appendChild(jump); item.appendChild(remove); box.appendChild(item);
+  });
+  shown.forEach(updatePinButton);
+}
+async function loadPins(id, tok) {
+  if (!id) return;
+  var r = await sb.from('conversation_pins')
+    .select('id,conversation_id,message_id,pinned_by,created_at')
+    .eq('conversation_id', id).order('created_at', { ascending: false }).limit(20);
+  if (r.error || tok !== loadTok) return;
+  var ids = r.data.map(function (p) { return p.message_id; });
+  var messageMap = new Map();
+  if (ids.length) {
+    var m = await sb.from('messages')
+      .select('id,seq,sender_id,content,message_type,created_at')
+      .in('id', ids).eq('conversation_id', id);
+    if (m.error || tok !== loadTok) return;
+    (m.data || []).forEach(function (x) { messageMap.set(x.id, x); });
+  }
+  conversationPins = r.data.filter(function (p) { return messageMap.has(p.message_id); })
+    .map(function (p) { p.message = messageMap.get(p.message_id); return p; });
+  renderPins();
+}
+async function togglePinMessage(message) {
+  if (!active || !message || !message.id) return;
+  var pinned = isPinned(message.id);
+  var r = await sb.rpc(pinned ? 'unpin_message' : 'pin_message', { p_message: message.id });
+  if (r.error) { hint('메시지를 고정하지 못했습니다.'); return; }
+  await loadPins(active, loadTok);
+  hint(pinned ? '메시지 고정을 해제했습니다.' : '메시지를 고정했습니다.');
+}
+async function jumpToPinned(pin) {
+  if (!active || !pin) return;
+  var id = active, tok = loadTok;
+  var target = await sb.from('messages').select(COLS)
+    .eq('id', pin.message_id).eq('conversation_id', id).maybeSingle();
+  if (target.error || !target.data || tok !== loadTok) { hint('고정된 메시지를 찾지 못했습니다.'); return; }
+  var seq = Number(target.data.seq);
+  var results = await Promise.all([
+    sb.from('messages').select(COLS).eq('conversation_id', id).lte('seq', seq).order('seq', { ascending: false }).limit(15),
+    sb.from('messages').select(COLS).eq('conversation_id', id).gt('seq', seq).order('seq', { ascending: true }).limit(15)
+  ]);
+  if (results[0].error || results[1].error || tok !== loadTok) { hint('고정된 메시지를 불러오지 못했습니다.'); return; }
+  var before = results[0].data.reverse();
+  var arr = before.concat(results[1].data);
+  await signMany(arr); await loadReactions(arr);
+  if (tok !== loadTok) return;
+  shown = new Map();
+  var frag = document.createDocumentFragment();
+  arr.forEach(function (m) { frag.appendChild(addEntry(m)); });
+  msEl.replaceChildren(frag);
+  hasMore = before.length === 15; firstLoading = false;
+  msEl.scrollTop = 0; stick = false;
+  var entry = shown.get(pin.message_id);
+  if (entry) {
+    entry.el.classList.add('pinned-focus');
+    entry.el.scrollIntoView({ block: 'center' });
+  }
+  await loadConversationEvents(id, tok);
+}
+function renderConversationEvent(event) {
+  if (!event || loadedEventIds.has(event.id)) return;
+  loadedEventIds.add(event.id);
+  var c = convs.get(event.conversation_id);
+  var actor = nameOf(c, event.actor_id), target = nameOf(c, event.target_id);
+  var message = event.event_type === 'kicked'
+    ? target + '님이 방에서 강퇴되었습니다.'
+    : actor + '님이 ' + target + '님을 차단했습니다.';
+  var line = el('div', 'system-event', message);
+  line.dataset.eventId = event.id;
+  msEl.appendChild(line);
+}
+async function loadConversationEvents(id, tok) {
+  if (!id) return;
+  var r = await sb.from('conversation_events')
+    .select('id,conversation_id,actor_id,target_id,event_type,created_at')
+    .eq('conversation_id', id).order('created_at', { ascending: true }).limit(50);
+  if (r.error || tok !== loadTok || active !== id) return;
+  (r.data || []).forEach(renderConversationEvent);
 }
 function appendMsg(m) {
   if (m.conversation_id !== active) return;
@@ -725,7 +892,10 @@ function newMsg(type) {
            reply_preview: replyPreview, mention_user_ids: [], created_at: new Date().toISOString(), _st: 'sending' };
 }
 function sendText() {
-  if (!active) return;
+  if (!active || isDirectBlocked(convs.get(active))) {
+    if (active && isDirectBlocked(convs.get(active))) hint('차단 상태에서는 메시지를 보낼 수 없습니다.');
+    return;
+  }
   var text = inp.value.trim();
   if (!text || !beginOutgoingMessage()) return;
   var m = newMsg('text');
@@ -1054,6 +1224,13 @@ function startRealtime() {
   chan = sb.channel('app-' + me.id)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, function (p) { onMsg(p.new); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, onReactionChange)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_events' }, function (p) {
+      if (p.new && p.new.conversation_id === active) renderConversationEvent(p.new);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_pins' }, function (p) {
+      var row = p.new || p.old;
+      if (row && row.conversation_id === active) loadPins(active, loadTok);
+    })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'conversation_members' }, function (p) { onMember(p.new); })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_members' }, scheduleReload)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'friendships' }, scheduleReload)
@@ -1163,6 +1340,7 @@ function errText(e) {
   var s = msgOf(e);
   if (s.indexOf('user_not_found') >= 0) return '존재하지 않는 코드입니다.';
   if (s.indexOf('lookup_rate_limited') >= 0) return '코드 검색을 너무 많이 시도했습니다. 10분 후 다시 시도하세요.';
+  if (s.indexOf('user_blocked') >= 0) return '차단 관계에서는 친구 요청을 보낼 수 없습니다.';
   if (s.indexOf('self') >= 0) return '자신의 코드는 추가할 수 없습니다.';
   if (s.indexOf('invalid_code') >= 0) return '올바른 코드를 입력하세요.';
   if (s.indexOf('name_required') >= 0) return '이름을 입력하세요.';
@@ -1758,6 +1936,7 @@ function init() {
   $('cjn').addEventListener('submit', function (e) { e.preventDefault(); joinCodeRoom(); });
   $('rc').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); });
   $('rnm').addEventListener('click', renameRoom);
+  $('bl').addEventListener('click', toggleBlockActive);
   $('pb').addEventListener('click', function () {
     var p = $('pl'); panelOpen = p.hidden;
     p.hidden = !panelOpen;
