@@ -130,6 +130,69 @@ async function loadVapid() {
   return { cfg };
 }
 
+
+async function cleanupExpiredRoomMessages() {
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const batchSize = 500;
+  const maxBatches = 12;
+  let deletedMessages = 0;
+  let removedFiles = 0;
+  let batches = 0;
+
+  for (let i = 0; i < maxBatches; i++) {
+    const { data: rows, error } = await admin
+      .from("messages")
+      .select("id, conversation_id, storage_path, conversations!inner(type)")
+      .in("conversations.type", ["open", "group"])
+      .lt("created_at", cutoff)
+      .order("created_at", { ascending: true })
+      .limit(batchSize);
+
+    if (error) {
+      console.error("room message retention query failed", error.code, error.message);
+      return json({ error: "retention_query_failed", deletedMessages, removedFiles }, 500);
+    }
+    if (!rows?.length) break;
+
+    const paths = rows
+      .map((row) => row.storage_path)
+      .filter((path): path is string => typeof path === "string" && path.length > 0);
+
+    if (paths.length) {
+      const { error: storageError } = await admin.storage.from("chat-images").remove(paths);
+      if (storageError) {
+        console.error("room message retention storage cleanup failed", storageError.message);
+        return json({ error: "retention_storage_failed", deletedMessages, removedFiles }, 500);
+      }
+      removedFiles += paths.length;
+    }
+
+    const ids = rows.map((row) => row.id);
+    const { data: deleted, error: deleteError } = await admin
+      .from("messages")
+      .delete()
+      .in("id", ids)
+      .select("id");
+
+    if (deleteError) {
+      console.error("room message retention delete failed", deleteError.code, deleteError.message);
+      return json({ error: "retention_delete_failed", deletedMessages, removedFiles }, 500);
+    }
+
+    deletedMessages += deleted?.length ?? 0;
+    batches++;
+    if (rows.length < batchSize) break;
+  }
+
+  return json({
+    deletedMessages,
+    removedFiles,
+    cutoff,
+    batches,
+    morePending: batches === maxBatches,
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -163,6 +226,20 @@ Deno.serve(async (req) => {
     const payload = JSON.stringify({ title: "서고챗 알림 테스트", body: "이 알림이 보이면 푸시 설정이 정상입니다.", c: null, tag: "sdj-test", test: true });
     const r = await deliver(subs as Sub[], payload, {});
     return json({ ...r, subscriptions: subs.length });
+  }
+
+  if (body.action === "cleanup-room-messages") {
+    const config = await getPushConfig(false).catch((error) => {
+      console.error("retention config read failed", error);
+      return null;
+    });
+    if (!config) return json({ error: "retention_config_unavailable" }, 500);
+    const expectedSecret = String(config.sdjchat_push_webhook_secret ?? "");
+    const givenSecret = req.headers.get("x-webhook-secret") ?? "";
+    if (!expectedSecret || !givenSecret || !safeEqual(givenSecret, expectedSecret)) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    return await cleanupExpiredRoomMessages();
   }
 
   const messageId = String(body.message_id ?? "");
