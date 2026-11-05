@@ -72,6 +72,11 @@ create table if not exists public.messages (
        and storage_path ~ ('^' || conversation_id::text || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.](jpg|png|webp|gif)$')
        and mime_type in ('image/jpeg','image/png','image/webp','image/gif')
        and file_size between 1 and 10485760)
+    or
+    (message_type = 'gif'
+       and char_length(btrim(content)) between 1 and 2000
+       and content ~ '^https://([A-Za-z0-9-]+\\.)?giphy\\.com/media/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+\\.gif(\\?.*)?$'
+       and storage_path is null and mime_type is null and file_size is null)
   )
 );
 create unique index if not exists messages_seq_uq   on public.messages (seq);
