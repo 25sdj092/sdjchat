@@ -726,6 +726,7 @@ function updatePinButton(en) {
   var pinned = isPinned(en.m.id);
   en.pinBtn.textContent = pinned ? '고정 해제' : '고정';
   en.pinBtn.title = pinned ? '고정 해제' : '이 메시지 고정';
+  if (en.el) en.el.classList.toggle('is-pinned', pinned);
 }
 function renderPins() {
   var box = $('pins');
@@ -1196,16 +1197,35 @@ function lastSeqEntry() {
 function scheduleRead() {         // 여러 번 호출돼도 0.5초 안에 한 번만 서버로 보낸다
   if (!pendingRead) pendingRead = setTimeout(function () { pendingRead = null; doRead(); }, 500);
 }
+function clearChatNotifications(id) {
+  if (!id || !pushOk()) return;
+  try {
+    navigator.serviceWorker.getRegistration('/').then(function (reg) {
+      if (!reg || !reg.getNotifications) return;
+      return reg.getNotifications().then(function (list) {
+        list.forEach(function (n) {
+          if (n.data && n.data.c === id) n.close();
+        });
+      });
+    }).catch(noop);
+  } catch (e) {}
+}
 function doRead() {
   if (!active || firstLoading || !viewing(active)) return;   // 채팅방을 실제로 보고 있을 때만
-  var c = convs.get(active), mm = c && c.members.get(me.id), e = lastSeqEntry();
+  var conversationId = active;
+  var c = convs.get(conversationId), mm = c && c.members.get(me.id), e = lastSeqEntry();
   if (!mm || !e) return;
   var seq = Number(e.dataset.seq);
-  if (seq <= mm.seq) { if (c.unread) { c.unread = 0; setBadge(c); } return; }
+  if (seq <= mm.seq) {
+    if (c.unread) { c.unread = 0; setBadge(c); }
+    clearChatNotifications(conversationId);
+    return;
+  }
   var prev = mm.seq;
   mm.seq = seq; c.unread = 0; setBadge(c);
-  sb.rpc('mark_read', { p_conv: active, p_message: e.dataset.id }).then(function (r) {
+  sb.rpc('mark_read', { p_conv: conversationId, p_message: e.dataset.id }).then(function (r) {
     if (r.error) { mm.seq = prev; setTimeout(scheduleRead, 3000); }
+    else clearChatNotifications(conversationId);
   });
 }
 
@@ -1354,6 +1374,7 @@ function errText(e) {
   if (s.indexOf('invalid_code') >= 0) return '올바른 코드를 입력하세요.';
   if (s.indexOf('name_required') >= 0) return '이름을 입력하세요.';
   if (s.indexOf('invalid_name') >= 0) return '이름은 한글과 숫자만 사용해 12자 이내로 입력하세요.';
+  if (s.indexOf('room_kicked_for_3_days') >= 0) return '이 방에서 강퇴되어 입장할 수 없습니다. 강퇴된 시점부터 3일 후 다시 입장할 수 있습니다.';
   if (s.indexOf('room_not_found') >= 0) return '존재하지 않는 방 코드입니다.';
   if (s.indexOf('room_owner_only') >= 0) return '방장만 할 수 있는 작업입니다.';
   return '처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.';
@@ -1433,6 +1454,7 @@ async function joinCodeRoom() {
   $('rcb').disabled = false;
   if (r.error) {
     var m = msgOf(r.error);
+    if (m.indexOf('room_kicked_for_3_days') >= 0) return jsay(errText(r.error));
     if (m.indexOf('room_lookup_rate_limited') >= 0) return jsay('코드 입력을 너무 많이 시도했습니다. 10분 후 다시 시도하세요.');
     if (m.indexOf('room_not_found') >= 0) return jsay('존재하지 않는 방 코드입니다.');
     if (m.indexOf('invalid_room_code') >= 0) return jsay('방 코드는 숫자 6자리입니다.');
@@ -1445,7 +1467,7 @@ async function joinCodeRoom() {
 }
 async function joinOpenRoom(id) {
   var r = await sb.rpc('join_open_room', { p_conv: id });
-  if (r.error) { hint('오픈채팅에 참가하지 못했습니다. 다시 시도하세요.'); return; }
+  if (r.error) { hint(errText(r.error)); return; }
   if (!r.data || !r.data.ok) { hint('이 오픈채팅방은 더 이상 참가할 수 없습니다.'); scheduleOpenRoomsReload(); return; }
   await reload();
   openChat(id);
@@ -1488,7 +1510,7 @@ async function editMyName() {
 async function kickMember(convId, userId, userName) {
   var c = convs.get(convId);
   if (!c || c.owner !== me.id || userId === me.id) return;
-  if (!confirm('"' + userName + '"님을 이 방에서 강퇴할까요?')) return;
+  if (!confirm('"' + userName + '"님을 이 방에서 강퇴할까요?\n강퇴된 사용자는 3일 동안 이 방에 다시 입장할 수 없습니다.')) return;
   var result = await sb.rpc('kick_room_member', { p_conv: convId, p_user: userId });
   if (result.error) {
     var message = msgOf(result.error);
