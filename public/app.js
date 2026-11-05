@@ -7,7 +7,7 @@ var PAGE = 30;                   // 한 번에 불러오는 메시지 수
 var DOM_CAP = 300;               // 화면에 유지하는 최대 말풍선 수
 var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
-var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at,reply_to,reply_sender_id,reply_preview,mention_user_ids';
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -479,7 +479,7 @@ function setReplyInput(m) {
   if (!m || !m.seq) return hint('전송이 완료된 메시지에만 답글을 달 수 있습니다.');
   replyTarget = m;
   var c = convs.get(m.conversation_id);
-  var preview = m.message_type === 'image' ? '사진' : String(m.content || '').replace(/\s+/g, ' ').trim();
+  var preview = m.message_type === 'image' ? '사진' : m.message_type === 'gif' ? 'GIF' : String(m.content || '').replace(/\s+/g, ' ').trim();
   $('replyText').textContent = nameOf(c, m.sender_id) + ': ' + preview.slice(0, 90);
   $('replying').hidden = false;
   hideMentionMenu();
@@ -549,17 +549,23 @@ function addEntry(m) {
     col.appendChild(quote);
   }
   var b = el('div', 'b');
-  if (m.message_type === 'image') {
-    b.className = 'b img';
+  if (m.message_type === 'image' || m.message_type === 'gif') {
+    b.className = 'b img' + (m.message_type === 'gif' ? ' gif' : '');
     var im = new Image();
-    im.alt = '사진'; im.loading = 'lazy'; im.decoding = 'async'; im.draggable = false;
+    im.alt = m.message_type === 'gif' ? 'GIF' : '사진';
+    im.loading = 'lazy'; im.decoding = 'async'; im.draggable = false;
     im.addEventListener('load', function () { if (stick) msEl.scrollTop = msEl.scrollHeight; });
     im.addEventListener('click', function () { openLb(im.currentSrc || im.src); });
-    im.addEventListener('error', function () {
-      if (im._retried || m._blob) return;
-      im._retried = true; urls.delete(m.storage_path); setSrc(im, m);
-    });
-    setSrc(im, m);
+    if (m.message_type === 'gif') {
+      if (isGiphyMediaUrl(m.content)) im.src = m.content;
+      else im.alt = 'GIF 주소가 올바르지 않습니다';
+    } else {
+      im.addEventListener('error', function () {
+        if (im._retried || m._blob) return;
+        im._retried = true; urls.delete(m.storage_path); setSrc(im, m);
+      });
+      setSrc(im, m);
+    }
     b.appendChild(im);
     if (m._st === 'sending') { pg = el('div', 'pg'); b.appendChild(pg); }
   } else renderMessageText(b, m, c);
@@ -674,7 +680,7 @@ function fitInput() {
 }
 function newMsg(type) {
   var target = replyTarget, c = convs.get(active);
-  var replyPreview = target ? (target.message_type === 'image' ? '사진' : String(target.content || '').replace(/\s+/g, ' ').trim().slice(0, 90)) : null;
+  var replyPreview = target ? (target.message_type === 'image' ? '사진' : target.message_type === 'gif' ? 'GIF' : String(target.content || '').replace(/\s+/g, ' ').trim().slice(0, 90)) : null;
   return { id: uuid(), seq: null, conversation_id: active, sender_id: me.id, content: '', message_type: type,
            storage_path: null, mime_type: null, file_size: null,
            reply_to: target ? target.id : null, reply_sender_id: target ? target.sender_id : null,
@@ -724,7 +730,7 @@ function retryFailed() {
 /* 사진 */
 function sendImage(f) {
   if (!active) return;
-  if (!EXT[f.type]) return hint('JPEG, PNG, WebP, GIF 파일만 보낼 수 있습니다.');
+  if (!EXT[f.type]) return hint('JPEG, PNG, WebP 사진만 보낼 수 있습니다. GIF는 GIF 버튼에서 검색하세요.');
   if (f.size > MAX_IMG) return hint('사진은 10MB 이하만 보낼 수 있습니다. (' + (f.size / 1048576).toFixed(1) + 'MB)');
   if (f.size < 1) return hint('빈 파일입니다.');
   var m = newMsg('image');
@@ -774,7 +780,155 @@ async function putObject(m) {     // XHR 로 올려서 진행률을 얻는다. �
   });
 }
 
+/* ---------- GIPHY 검색 및 GIF 메시지 ---------- */
+var gifPickerState = { query: '', offset: 0, total: 0, loading: false, token: 0, controller: null };
+
+function isGiphyMediaUrl(value) {
+  try {
+    var u = new URL(value), host = u.hostname.toLowerCase(), path = u.pathname.toLowerCase();
+    return u.protocol === 'https:' &&
+      (host === 'giphy.com' || host.endsWith('.giphy.com')) &&
+      path.indexOf('/media/') === 0 && path.endsWith('.gif');
+  } catch (e) { return false; }
+}
+function giphyTrack(item, action) {
+  var u = item && item.analytics && item.analytics[action] && item.analytics[action].url;
+  if (!u) return;
+  var pixel = new Image();
+  pixel.referrerPolicy = 'no-referrer';
+  pixel.src = u;
+}
+function openGifPicker() {
+  if (!active) return hint('대화방을 먼저 선택하세요.');
+  $('gifPicker').hidden = false;
+  $('gifQuery').value = '';
+  $('gifStatus').textContent = '';
+  $('gifGrid').replaceChildren();
+  gifPickerState.query = '';
+  gifPickerState.offset = 0;
+  gifPickerState.total = 0;
+  fetchGifs(true);
+  $('gifQuery').focus();
+}
+function closeGifPicker() {
+  $('gifPicker').hidden = true;
+  if (gifPickerState.controller) gifPickerState.controller.abort();
+  gifPickerState.loading = false;
+}
+async function fetchGifs(reset) {
+  if (!CFG.giphyApiKey) {
+    $('gifStatus').textContent = 'GIPHY API 키가 설정되지 않았습니다.';
+    return;
+  }
+  if (gifPickerState.loading && !reset) return;
+  if (reset && gifPickerState.controller) gifPickerState.controller.abort();
+  var controller = new AbortController();
+  gifPickerState.controller = controller;
+  var token = ++gifPickerState.token;
+  if (reset) {
+    gifPickerState.offset = 0;
+    gifPickerState.total = 0;
+    $('gifGrid').replaceChildren();
+  }
+  gifPickerState.loading = true;
+  $('gifMore').disabled = true;
+  $('gifStatus').textContent = 'GIF 불러오는 중…';
+  try {
+    var params = new URLSearchParams({
+      api_key: CFG.giphyApiKey,
+      limit: '18',
+      offset: String(gifPickerState.offset),
+      rating: 'g',
+      lang: 'ko'
+    });
+    var endpoint = gifPickerState.query
+      ? 'https://api.giphy.com/v1/gifs/search'
+      : 'https://api.giphy.com/v1/gifs/trending';
+    if (gifPickerState.query) params.set('q', gifPickerState.query);
+    var response = await fetch(endpoint + '?' + params.toString(), {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    var payload = await response.json();
+    if (token !== gifPickerState.token || $('gifPicker').hidden) return;
+    var items = Array.isArray(payload.data) ? payload.data : [];
+    gifPickerState.total = Number(payload.pagination && payload.pagination.total_count) || 0;
+    if (!items.length && !gifPickerState.offset) {
+      $('gifStatus').textContent = '검색 결과가 없습니다.';
+      $('gifMore').hidden = true;
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    items.forEach(function (item) {
+      var images = item && item.images;
+      var preview = images && ((images.fixed_height_small && images.fixed_height_small.url) ||
+        (images.fixed_height && images.fixed_height.url));
+      var media = images && ((images.downsized && images.downsized.url) ||
+        (images.downsized_medium && images.downsized_medium.url));
+      if (!preview) return;
+      var canSend = isGiphyMediaUrl(media);
+      var pick = el('button', 'gif-result');
+      pick.type = 'button';
+      pick.disabled = !canSend;
+      pick.title = item.title || 'GIF 선택';
+      var image = new Image();
+      image.src = preview;
+      image.alt = item.title || 'GIF';
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.draggable = false;
+      image.addEventListener('load', function () { giphyTrack(item, 'onload'); }, { once: true });
+      pick.appendChild(image);
+      if (canSend) {
+        pick.addEventListener('click', function () {
+          giphyTrack(item, 'onclick');
+          sendGiphyGif(item, media);
+        });
+      }
+      frag.appendChild(pick);
+    });
+    $('gifGrid').appendChild(frag);
+    gifPickerState.offset += items.length;
+    var more = gifPickerState.offset < gifPickerState.total && items.length > 0;
+    $('gifMore').hidden = !more;
+    $('gifStatus').textContent = $('gifGrid').childElementCount ? '' : '표시할 수 있는 GIF가 없습니다.';
+  } catch (error) {
+    if (error && error.name === 'AbortError') return;
+    if (token === gifPickerState.token) {
+      $('gifStatus').textContent = 'GIF를 불러오지 못했습니다. 잠시 후 다시 시도하세요.';
+      $('gifMore').hidden = true;
+    }
+  } finally {
+    if (token === gifPickerState.token) {
+      gifPickerState.loading = false;
+      $('gifMore').disabled = false;
+    }
+  }
+}
+function searchGifs() {
+  gifPickerState.query = $('gifQuery').value.trim();
+  fetchGifs(true);
+}
+function sendGiphyGif(item, mediaUrl) {
+  if (!active) return;
+  if (!isGiphyMediaUrl(mediaUrl)) return hint('올바른 GIPHY GIF 주소가 아닙니다.');
+  giphyTrack(item, 'onsent');
+  var m = newMsg('gif');
+  m.content = mediaUrl;
+  clearReplyInput();
+  hideMentionMenu();
+  closeGifPicker();
+  hint('');
+  appendMsg(m);
+  post(m);
+}
+
 /* ---------- 읽음 처리 ---------- */
+
 function lastSeqEntry() {
   for (var e = msEl.lastElementChild; e; e = e.previousElementSibling) if (e.dataset.seq) return e;
   return null;
@@ -1311,7 +1465,7 @@ async function notifyIncoming(c, m) {
   if (notified.size > 300) notified.delete(notified.values().next().value);
   var sender = nameOf(c, m.sender_id);
   var title = (c.type === 'open' || c.type === 'group') ? sender + ' · ' + c.name : sender;
-  var body = m.message_type === 'image' ? '사진을 보냈습니다.' : String(m.content).replace(/\s+/g, ' ').trim().slice(0, 80);
+  var body = m.message_type === 'image' ? '사진을 보냈습니다.' : m.message_type === 'gif' ? 'GIF를 보냈습니다.' : String(m.content).replace(/\s+/g, ' ').trim().slice(0, 80);
   var done = false;
   if (pushOk() && Notification.permission === 'granted') {
     try {
@@ -1510,13 +1664,22 @@ function init() {
   $('lv').addEventListener('click', roomAction);
   $('replyClear').addEventListener('click', clearReplyInput);
   $('at').addEventListener('click', function () { $('fi').click(); });
+  $('gifb').addEventListener('click', openGifPicker);
+  $('gifClose').addEventListener('click', closeGifPicker);
+  $('gifPicker').addEventListener('click', function (e) { if (e.target === $('gifPicker')) closeGifPicker(); });
+  $('gifSearchBtn').addEventListener('click', searchGifs);
+  $('gifQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchGifs(); } });
+  $('gifMore').addEventListener('click', function () { fetchGifs(false); });
   $('fi').addEventListener('change', function () {
     var f = this.files && this.files[0];
     this.value = '';
     if (f) sendImage(f);
   });
   $('lb').addEventListener('click', closeLb);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('lb').hidden) closeLb(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !$('lb').hidden) closeLb();
+    else if (e.key === 'Escape' && !$('gifPicker').hidden) closeGifPicker();
+  });
   $('cf').addEventListener('submit', function (e) { e.preventDefault(); sendText(); inp.focus(); });
   inp.addEventListener('input', function () { fitInput(); updateMentionMenu(); });
   inp.addEventListener('keydown', function (e) {
