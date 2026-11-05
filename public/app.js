@@ -674,6 +674,20 @@ function openLb(src) {
 function closeLb() { $('lb').hidden = true; $('lb').firstElementChild.removeAttribute('src'); }
 
 /* ---------- 메시지 전송 ---------- */
+var lastOutgoingAt = 0;
+var SEND_COOLDOWN_MS = 800;
+
+function beginOutgoingMessage() {
+  var now = Date.now();
+  var remaining = SEND_COOLDOWN_MS - (now - lastOutgoingAt);
+  if (remaining > 0) {
+    hint('도배 방지를 위해 잠깐 기다린 뒤 다시 보내 주세요.');
+    return false;
+  }
+  lastOutgoingAt = now;
+  return true;
+}
+
 function fitInput() {
   inp.style.height = 'auto';
   inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
@@ -689,7 +703,7 @@ function newMsg(type) {
 function sendText() {
   if (!active) return;
   var text = inp.value.trim();
-  if (!text) return;
+  if (!text || !beginOutgoingMessage()) return;
   var m = newMsg('text');
   m.content = text.slice(0, MAXLEN);
   m.mention_user_ids = mentionsIn(m.content);
@@ -697,7 +711,14 @@ function sendText() {
   appendMsg(m);
   post(m);
 }
-function retry(m) { if (m.message_type === 'image' && !m._up) upload(m); else post(m); }
+function retry(m) {
+  var remaining = (m._rateLimitedUntil || 0) - Date.now();
+  if (remaining > 0) {
+    hint('도배 방지를 위해 잠깐 기다린 뒤 다시 보내 주세요.');
+    return;
+  }
+  if (m.message_type === 'image' && !m._up) upload(m); else post(m);
+}
 async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전송 완료'로 표시한다
   outbox.set(m.id, m);
   m._st = 'sending';
@@ -711,7 +732,12 @@ async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전�
   if (r.error) {
     m._st = 'failed';
     en = shown.get(m.id); if (en) paint(en);
-    hint('메시지 전송 실패 (' + (r.error.code || '오류') + '): ' + (r.error.message || '다시 시도해 주세요.'));
+    if (r.error.code === 'P0001' && /message_rate_limited/.test(r.error.message || '')) {
+      m._rateLimitedUntil = Date.now() + SEND_COOLDOWN_MS + 50;
+      hint('도배 방지를 위해 잠깐 기다린 뒤 재시도해 주세요.');
+    } else {
+      hint('메시지 전송 실패 (' + (r.error.code || '오류') + '): ' + (r.error.message || '다시 시도해 주세요.'));
+    }
     return;
   }
   m.seq = r.data.seq; m.created_at = r.data.created_at; m._st = 'sent'; m._file = null;
@@ -726,7 +752,10 @@ async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전�
   scheduleRead();
 }
 function retryFailed() {
-  outbox.forEach(function (m) { if (m._st === 'failed') retry(m); });
+  var now = Date.now();
+  outbox.forEach(function (m) {
+    if (m._st === 'failed' && (!m._rateLimitedUntil || m._rateLimitedUntil <= now)) retry(m);
+  });
 }
 
 /* 사진 */
@@ -749,6 +778,7 @@ function sendImage(f) {
   if (!mime) return hint('JPEG, PNG, WebP, GIF 파일만 보낼 수 있습니다.');
   if (f.size > MAX_IMG) return hint('사진과 GIF는 10MB 이하만 보낼 수 있습니다. (' + (f.size / 1048576).toFixed(1) + 'MB)');
   if (f.size < 1) return hint('빈 파일입니다.');
+  if (!beginOutgoingMessage()) return;
   var m = newMsg('image');
   m.storage_path = active + '/' + uuid() + '.' + EXT[mime];
   m.mime_type = mime; m.file_size = f.size; m._file = f; m._blob = URL.createObjectURL(f); m._p = 0;
@@ -946,6 +976,7 @@ function searchGifs() {
 function sendGiphyGif(item, mediaUrl) {
   if (!active) return;
   if (!isGiphyMediaUrl(mediaUrl)) return hint('올바른 GIPHY GIF 주소가 아닙니다.');
+  if (!beginOutgoingMessage()) return;
   var m = newMsg('gif');
   m.content = mediaUrl;
   m._giphyItem = item;
