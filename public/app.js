@@ -801,7 +801,7 @@ var gifPickerState = { query: '', offset: 0, total: 0, loading: false, token: 0,
 function isGiphyMediaUrl(value) {
   try {
     var u = new URL(value), host = u.hostname.toLowerCase(), path = u.pathname.toLowerCase();
-    return u.protocol === 'https:' &&
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port &&
       (host === 'giphy.com' || host.endsWith('.giphy.com')) &&
       path.indexOf('/media/') === 0 && path.endsWith('.gif');
   } catch (e) { return false; }
@@ -889,10 +889,17 @@ async function fetchGifs(reset) {
       var images = item && item.images;
       var preview = images && ((images.fixed_height_small && images.fixed_height_small.url) ||
         (images.fixed_height && images.fixed_height.url));
-      var media = images && ((images.downsized && images.downsized.url) ||
-        (images.downsized_medium && images.downsized_medium.url));
+      var mediaCandidates = images ? [
+        images.downsized && images.downsized.url,
+        images.downsized_medium && images.downsized_medium.url,
+        images.original && images.original.url
+      ] : [];
+      var media = null;
+      for (var mi = 0; mi < mediaCandidates.length; mi++) {
+        if (isGiphyMediaUrl(mediaCandidates[mi])) { media = mediaCandidates[mi]; break; }
+      }
       if (!preview) return;
-      var canSend = isGiphyMediaUrl(media);
+      var canSend = !!media;
       var pick = el('button', 'gif-result');
       pick.type = 'button';
       pick.disabled = !canSend;
