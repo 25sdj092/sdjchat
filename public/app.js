@@ -1306,6 +1306,9 @@ function onMember(r) {
   var c = convs.get(r.conversation_id), mm = c && c.members.get(r.user_id);
   if (!c || !mm) { scheduleReload(); return; }
   var left = !!r.left_at, seq = Number(r.last_read_seq) || 0;
+  if (r.user_id === me.id && left && !mm.left) {
+    toast('방에서 강퇴됨', '방장이 회원님을 이 대화방에서 내보냈습니다.', null);
+  }
   if (left !== mm.left) scheduleReload();                // 나가기/다시 참가
   var other = r.user_id === me.id && seq > mm.seq;       // 다른 기기에서 내가 읽음 처리한 경우
   mm.left = left; mm.seq = Math.max(mm.seq, seq);
