@@ -123,6 +123,7 @@ select id, status_code, error_msg, left(content::text, 200) as content, created 
    - `supabase/migrations/20261104_chat_message_insert_permission.sql`
    - `supabase/migrations/20261105_allow_chat_gif.sql`
    - `supabase/migrations/20261105_giphy_gif_messages.sql`
+   - `supabase/migrations/20261105_giphy_gif_url_constraint_fix.sql`
 5. `supabase/functions/send-push/index.ts`를 `send-push`로 배포 (`supabase/config.toml` 에 `verify_jwt=false` 가 지정되어 있음; 함수가 별도 인증을 수행)
 6. 프로젝트 URL 및 Publishable Key를 `public/config.js` 또는 Vercel 빌드 환경변수에 입력
 
