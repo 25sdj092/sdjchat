@@ -306,6 +306,12 @@ function renderPanel() {
   members.forEach(function (m) {
     var li = el('li', null, m.name + (m.id === me.id ? ' (나)' : ''));
     if (m.id === c.owner) li.appendChild(el('span', 'own', '방장'));
+    if (c.owner === me.id && m.id !== me.id && m.id !== c.owner) {
+      var kick = el('button', 'kick-member', '강퇴');
+      kick.type = 'button';
+      kick.addEventListener('click', function () { kickMember(c.id, m.id, m.name); });
+      li.appendChild(kick);
+    }
     ul.appendChild(li);
   });
   box.replaceChildren(head, ul);
@@ -367,7 +373,9 @@ async function loadLatest(id, tok) {
   outbox.forEach(function (m) { if (m.conversation_id === id) appendMsg(m); });   // 아직 못 보낸 메시지도 다시 표시
   msEl.scrollTop = msEl.scrollHeight; stick = true;
   scheduleRead();
-  if (hasMore && msEl.scrollHeight <= msEl.clientHeight) loadOlder();
+  var current = convs.get(id);
+  // 방에서는 첫 진입 시 최근 30개만 보여 주고, 위쪽 과거 기록은 사용자가 직접 올릴 때만 조회한다.
+  if (hasMore && msEl.scrollHeight <= msEl.clientHeight && (!current || current.type === 'direct')) loadOlder();
 }
 async function loadOlder() {
   if (loadingOld || !hasMore || firstLoading || !active) return;
@@ -1290,6 +1298,21 @@ async function editMyName() {
   await reload();
   nameNotice('이름을 수정했습니다. 다음 수정은 7일 후에 가능합니다.');
 }
+async function kickMember(convId, userId, userName) {
+  var c = convs.get(convId);
+  if (!c || c.owner !== me.id || userId === me.id) return;
+  if (!confirm('"' + userName + '"님을 이 방에서 강퇴할까요?')) return;
+  var result = await sb.rpc('kick_room_member', { p_conv: convId, p_user: userId });
+  if (result.error) {
+    var message = msgOf(result.error);
+    hint(message.indexOf('room_owner_only') >= 0 ? '방장만 강퇴할 수 있습니다.' : '참여자를 강퇴하지 못했습니다.');
+    return;
+  }
+  await reload();
+  if (active === convId) renderPanel();
+  hint(userName + '님을 방에서 강퇴했습니다.');
+}
+
 async function renameRoom() {
   var c = convs.get(active);
   if (!c || c.type === 'direct' || c.owner !== me.id) return;
