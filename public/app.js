@@ -717,6 +717,7 @@ async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전�
   m.reply_sender_id = r.data.reply_sender_id; m.reply_preview = r.data.reply_preview;
   m.mention_user_ids = r.data.mention_user_ids || m.mention_user_ids || [];
   outbox.delete(m.id);
+  if (m._giphyItem) { giphyTrack(m._giphyItem, 'onsent'); m._giphyItem = null; }
   kickPush(m.id);
   en = shown.get(m.id); if (en) paint(en);
   var c = convs.get(m.conversation_id);
@@ -792,11 +793,17 @@ function isGiphyMediaUrl(value) {
   } catch (e) { return false; }
 }
 function giphyTrack(item, action) {
-  var u = item && item.analytics && item.analytics[action] && item.analytics[action].url;
-  if (!u) return;
-  var pixel = new Image();
-  pixel.referrerPolicy = 'no-referrer';
-  pixel.src = u;
+  var raw = item && item.analytics && item.analytics[action] && item.analytics[action].url;
+  if (!raw) return;
+  try {
+    var ping = new URL(raw);
+    ping.searchParams.append('ts', Date.now().toString());
+    ping.searchParams.append('customer_id', me && me.id ? me.id : 'sdjchat');
+    fetch(ping.toString(), {
+      method: 'GET', mode: 'no-cors', credentials: 'omit',
+      cache: 'no-store', keepalive: true
+    }).catch(function () {});
+  } catch (e) {}
 }
 function openGifPicker() {
   if (!active) return hint('대화방을 먼저 선택하세요.');
@@ -839,7 +846,8 @@ async function fetchGifs(reset) {
       limit: '18',
       offset: String(gifPickerState.offset),
       rating: 'g',
-      lang: 'ko'
+      lang: 'ko',
+      customer_id: me && me.id ? me.id : 'sdjchat'
     });
     var endpoint = gifPickerState.query
       ? 'https://api.giphy.com/v1/gifs/search'
@@ -910,15 +918,15 @@ async function fetchGifs(reset) {
   }
 }
 function searchGifs() {
-  gifPickerState.query = $('gifQuery').value.trim();
+  gifPickerState.query = $('gifQuery').value.trim().slice(0, 50);
   fetchGifs(true);
 }
 function sendGiphyGif(item, mediaUrl) {
   if (!active) return;
   if (!isGiphyMediaUrl(mediaUrl)) return hint('올바른 GIPHY GIF 주소가 아닙니다.');
-  giphyTrack(item, 'onsent');
   var m = newMsg('gif');
   m.content = mediaUrl;
+  m._giphyItem = item;
   clearReplyInput();
   hideMentionMenu();
   closeGifPicker();
