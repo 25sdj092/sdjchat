@@ -620,6 +620,7 @@ function addEntry(m) {
   var mine = m.sender_id === me.id;
   var d = el('div', 'm' + (mine ? ' me' : ''));
   d.dataset.id = m.id;
+  d.dataset.createdAt = m.created_at || '';
   var col = el('div', 'col'), sn = null, pg = null;
   if (!mine && c && (c.type === 'open' || c.type === 'group')) {
     sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn);
@@ -808,7 +809,19 @@ async function jumpToPinned(pin) {
   }
   await loadConversationEvents(id, tok);
 }
-function renderConversationEvent(event) {
+function insertTimelineEntry(node, timestamp) {
+  var time = Date.parse(timestamp || '');
+  var children = msEl.children;
+  for (var i = 0; i < children.length; i++) {
+    var childTime = Date.parse(children[i].dataset.createdAt || '');
+    if (Number.isFinite(time) && Number.isFinite(childTime) && childTime > time) {
+      msEl.insertBefore(node, children[i]);
+      return;
+    }
+  }
+  msEl.appendChild(node);
+}
+function renderConversationEvent(event, followLatest) {
   if (!event || loadedEventIds.has(event.id)) return;
   loadedEventIds.add(event.id);
   var c = convs.get(event.conversation_id);
@@ -818,8 +831,12 @@ function renderConversationEvent(event) {
     : actor + '님이 ' + target + '님을 차단했습니다.';
   var line = el('div', 'system-event', message);
   line.dataset.eventId = event.id;
-  msEl.appendChild(line);
-  if (stick) msEl.scrollTop = msEl.scrollHeight;
+  line.dataset.createdAt = event.created_at || '';
+  insertTimelineEntry(line, event.created_at);
+  // 과거 이벤트를 불러올 때는 스크롤을 내리지 않는다. 실시간 최신 이벤트만 맨 아래로 따라간다.
+  if (followLatest && line === msEl.lastElementChild && stick) {
+    msEl.scrollTop = msEl.scrollHeight;
+  }
 }
 async function loadConversationEvents(id, tok) {
   if (!id) return;
@@ -1250,7 +1267,7 @@ function startRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, function (p) { onMsg(p.new); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, onReactionChange)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_events' }, function (p) {
-      if (p.new && p.new.conversation_id === active) renderConversationEvent(p.new);
+      if (p.new && p.new.conversation_id === active) renderConversationEvent(p.new, true);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'user_blocks' }, scheduleReload)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_pins' }, function (p) {
