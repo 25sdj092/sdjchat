@@ -2,5 +2,6 @@
 window.APP_CONFIG = {
   "supabaseUrl": "https://tunrakwqldpcxrtbdeuq.supabase.co",
   "supabaseAnonKey": "sb_publishable_iS-PEI5TbIzVqJjYsJ2RMQ_tbXDEtb2",
-  "vapidPublicKey": ""
+  "vapidPublicKey": "",
+  "giphyApiKey": "fJpO4HWnrEHXoMVnVN8fsOPX9iSzSkGQ"
 };
