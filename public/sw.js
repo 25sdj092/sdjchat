@@ -45,11 +45,13 @@ self.addEventListener('notificationclick', function (e) {
   var c = e.notification.data && e.notification.data.c;
   e.waitUntil((async function () {
     // 알림을 눌러 대화방을 확인할 때, 같은 대화방에 쌓인 알림도 함께 정리한다.
-    var stacked = await self.registration.getNotifications();
-    stacked.forEach(function (n) {
-      var data = n.data || {};
-      if (!c || data.c === c) n.close();
-    });
+    try {
+      var stacked = await self.registration.getNotifications();
+      stacked.forEach(function (n) {
+        var data = n.data || {};
+        if (!c || data.c === c) n.close();
+      });
+    } catch (err) {}
     var wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (wins.length) {                              // 열려 있는 탭이 있으면 그 탭에서 해당 방으로 이동
       var w = wins.find(function (x) { return x.visibilityState === 'visible'; }) || wins[0];
