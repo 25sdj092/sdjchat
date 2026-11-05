@@ -336,7 +336,7 @@ function updateHeader() {
   $('bl').hidden = !peer;
   if (peer) {
     $('bl').textContent = blockedUsers.has(peer.id) ? '차단 해제' : '차단';
-    $('bl').disabled = blockedByUsers.has(peer.id) && !blockedUsers.has(peer.id);
+    $('bl').disabled = false;
   }
   setComposerBlocked(c);
 }
@@ -735,7 +735,7 @@ function renderPins() {
   box.appendChild(el('span', 'pins-label', '고정'));
   conversationPins.forEach(function (pin) {
     var msg = pin.message || {};
-    var preview = msg.message_type === 'image' ? '사진' : msg.message_type === 'gif' ? 'GIF' : String(msg.content || '메시지').replace(/\\s+/g, ' ').slice(0, 60);
+    var preview = msg.message_type === 'image' ? '사진' : msg.message_type === 'gif' ? 'GIF' : String(msg.content || '메시지').replace(/\s+/g, ' ').slice(0, 60);
     var item = el('div', 'pin-item');
     var jump = el('button', 'pin-jump', (nameOf(convs.get(active), msg.sender_id) || '메시지') + ' · ' + preview);
     jump.type = 'button';
