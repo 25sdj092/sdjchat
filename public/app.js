@@ -32,7 +32,8 @@ var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld 
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
 var reactionsByMessage = new Map(), replyTarget = null;
-var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉'];
+var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
+var listSections = { friends: true, openRooms: true };
 
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -140,11 +141,25 @@ function openRoomItem(room, index) {
   fre[room.id] = { li: li, bd: bd };
   return li;
 }
+function applyListSection(key) {
+  var heading = key === 'friends' ? $('fh') : $('rh');
+  var list = key === 'friends' ? $('fl') : $('rl');
+  var expanded = !!listSections[key];
+  list.hidden = !expanded;
+  heading.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  var arrow = heading.querySelector('.section-arrow');
+  if (arrow) arrow.textContent = expanded ? '⌄' : '›';
+}
+function toggleListSection(key) {
+  listSections[key] = !listSections[key];
+  applyListSection(key);
+}
 function renderOpenRooms() {
   var frag = document.createDocumentFragment();
   openRooms.forEach(function (room, index) { frag.appendChild(openRoomItem(room, index)); });
   $('rl').replaceChildren(frag);
   $('rh').hidden = !openRooms.length;
+  applyListSection('openRooms');
 }
 function renderLists() {
   fre = {};
@@ -154,6 +169,7 @@ function renderLists() {
   $('fl').replaceChildren(f);
   $('cl').replaceChildren(g);
   $('ch').hidden = !g.childNodes.length;
+  applyListSection('friends');
   renderOpenRooms();
   updateTitle();
 }
@@ -1694,6 +1710,8 @@ function init() {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyText(me.code, null); }
   });
   $('nameb').addEventListener('click', editMyName);
+  $('fh').addEventListener('click', function () { toggleListSection('friends'); });
+  $('rh').addEventListener('click', function () { toggleListSection('openRooms'); });
   $('lo').addEventListener('click', logout);
   $('nb').addEventListener('click', onNbClick);
   $('addb').addEventListener('click', function () {
