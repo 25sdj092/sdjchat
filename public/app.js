@@ -730,7 +730,11 @@ function updatePinButton(en) {
 function renderPins() {
   var box = $('pins');
   box.replaceChildren();
-  if (!conversationPins.length) { box.hidden = true; return; }
+  if (!conversationPins.length) {
+    box.hidden = true;
+    shown.forEach(updatePinButton);
+    return;
+  }
   box.hidden = false;
   box.appendChild(el('span', 'pins-label', '고정'));
   conversationPins.forEach(function (pin) {
@@ -814,6 +818,7 @@ function renderConversationEvent(event) {
   var line = el('div', 'system-event', message);
   line.dataset.eventId = event.id;
   msEl.appendChild(line);
+  if (stick) msEl.scrollTop = msEl.scrollHeight;
 }
 async function loadConversationEvents(id, tok) {
   if (!id) return;
