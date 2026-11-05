@@ -183,3 +183,30 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 #joinp .room-form input{width:100%;font-size:15px}
 #joinp .room-form button{width:100%;font-size:13px}
 #jst{margin-top:6px;font-size:12px;color:#6b7280}
+
+
+/* GIPHY GIF 검색 */
+#cf #at,#cf #gifb{flex:none;padding:8px 10px}
+#gifPicker{position:fixed;inset:0;z-index:20;background:rgba(18,22,28,.58);display:flex;align-items:center;justify-content:center;padding:12px}
+.gif-panel{width:min(580px,96vw);max-height:84vh;display:flex;flex-direction:column;gap:10px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 8px 28px rgba(0,0,0,.22)}
+.gif-head,.gif-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.gif-head strong{font-size:15px}
+.gif-head button,.gif-foot button{font-size:12px;padding:3px 9px}
+.gif-search{display:flex;gap:7px}
+.gif-search input{flex:1;min-width:0;font-size:15px}
+.gif-search button{flex:none}
+#gifStatus{min-height:18px;font-size:12px;color:#6b7280}
+#gifGrid{min-height:80px;overflow:auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-content:start}
+.gif-result{height:108px;padding:0;border:0;border-radius:5px;overflow:hidden;background:#eef0f2}
+.gif-result img{display:block;width:100%;height:100%;object-fit:cover}
+.gif-result:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.gif-result:disabled{opacity:.55;cursor:default}
+.gif-foot a{font-size:11px;font-weight:700;color:#444;text-decoration:none}
+.gif-foot a:hover{text-decoration:underline}
+.b.gif{padding:0;background:transparent;overflow:hidden}
+.b.gif img{display:block;max-width:min(300px,70vw);max-height:260px;width:auto;height:auto;object-fit:contain;cursor:zoom-in;border-radius:7px}
+@media(max-width:700px){
+  .gif-panel{max-height:88vh;width:96vw}
+  #gifGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+  .gif-result{height:110px}
+}
