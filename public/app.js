@@ -1227,6 +1227,7 @@ function startRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_events' }, function (p) {
       if (p.new && p.new.conversation_id === active) renderConversationEvent(p.new);
     })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'user_blocks' }, scheduleReload)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_pins' }, function (p) {
       var row = p.new || p.old;
       if (row && row.conversation_id === active) loadPins(active, loadTok);
