@@ -11,7 +11,7 @@ alter table public.messages
     or
     (
       message_type = 'image'
-      and storage_path ~ ('^' || conversation_id::text || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.](jpg|png|webp|gif)$')
+      and storage_path ~ ('^' || conversation_id::text || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.](jpg|png|webp|gif)$')
       and mime_type in ('image/jpeg','image/png','image/webp','image/gif')
       and file_size between 1 and 10485760
     )
