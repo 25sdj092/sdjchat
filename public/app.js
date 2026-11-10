@@ -19,7 +19,7 @@ function lget(k, d) { try { var v = localStorage.getItem(k); return v == null ? 
 function lset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
 /* ---------- 상태 ---------- */
-var sb = null, me = null, chan = null, presenceChan = null, netOk = false, loggingOut = false;
+var sb = null, me = null, chan = null, presenceChan = null, netOk = false;
 var onlineUsers = new Set();
 var convs = new Map();           // 내가 참여 중인 대화방
 var openRooms = [];             // 전체 공개 오픈채팅 목록
@@ -32,7 +32,6 @@ var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld 
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
 var reactionsByMessage = new Map(), replyTarget = null;
-var blockedUsers = new Set(), blockedByUsers = new Set();
 var conversationPins = [], loadedEventIds = new Set();
 var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
 var listSections = { friends: true, openRooms: true };
@@ -240,9 +239,7 @@ async function loadAll() {
     sb.from('friendships').select('id,requester:profiles!friendships_requester_id_fkey(username,user_code)')
       .eq('receiver_id', me.id).eq('status', 'pending').order('created_at'),
     sb.rpc('conversation_summary'),
-    sb.rpc('list_open_rooms'),
-    sb.from('user_blocks').select('blocker_id,blocked_id')
-      .or('blocker_id.eq.' + me.id + ',blocked_id.eq.' + me.id)
+    sb.rpc('list_open_rooms')
   ]);
   for (var i = 0; i < res.length; i++) if (res[i].error) throw res[i].error;
 
@@ -262,12 +259,6 @@ async function loadAll() {
     if (c) { c.unread = Number(s.unread) || 0; c.lastAt = s.last_message_at; }
   });
   convs = next;
-  blockedUsers = new Set();
-  blockedByUsers = new Set();
-  (res[4].data || []).forEach(function (b) {
-    if (b.blocker_id === me.id) blockedUsers.add(b.blocked_id);
-    if (b.blocked_id === me.id) blockedByUsers.add(b.blocker_id);
-  });
   openRooms = res[3].data || [];
   reqs = (res[1].data || []).map(function (r) {
     return { id: r.id, name: r.requester ? r.requester.username : '알 수 없음', code: r.requester ? r.requester.user_code : '' };
@@ -286,38 +277,6 @@ function hint(t) {
   clearTimeout(hint._t);
   if (t) hint._t = setTimeout(function () { h.textContent = ''; }, 3500);
 }
-function isDirectBlocked(c) {
-  if (!c || c.type !== 'direct') return false;
-  var peer = otherOf(c);
-  return !!(peer && (blockedUsers.has(peer.id) || blockedByUsers.has(peer.id)));
-}
-function setComposerBlocked(c) {
-  var disabled = isDirectBlocked(c);
-  ['inp','sd','at','gifb'].forEach(function (id) {
-    if ($(id)) $(id).disabled = disabled;
-  });
-  if (inp) inp.placeholder = disabled ? '차단 상태에서는 메시지를 보낼 수 없습니다.' : '메시지 입력';
-}
-async function toggleBlockActive() {
-  var c = convs.get(active), peer = c && c.type === 'direct' ? otherOf(c) : null;
-  if (!peer) return;
-  var willBlock = !blockedUsers.has(peer.id);
-  if (!confirm(willBlock
-    ? peer.name + '님을 차단할까요? 서로 친구 관계가 해제되고 DM 전송과 친구 요청이 차단됩니다.'
-    : peer.name + '님의 차단을 해제할까요? 친구 관계는 자동으로 복원되지 않습니다.')) return;
-  $('bl').disabled = true;
-  var r = await sb.rpc('block_user', { p_user: peer.id, p_blocked: willBlock });
-  $('bl').disabled = false;
-  if (r.error) { hint('차단 설정을 변경하지 못했습니다.'); return; }
-  await reload();
-  if (active) updateHeader();
-  if (willBlock) {
-    await loadConversationEvents(active, loadTok);
-    hint(peer.name + '님을 차단했습니다.');
-  } else {
-    hint(peer.name + '님의 차단을 해제했습니다.');
-  }
-}
 function updateHeader() {
   var c = convs.get(active);
   if (!c) return;
@@ -329,16 +288,8 @@ function updateHeader() {
       (c.type === 'group' ? ' · 코드 ' + c.room_code : '') + (o ? ' · 방장 ' + o.name : '');
   } else {
     var p = otherOf(c);
-    var blockState = p && blockedUsers.has(p.id) ? ' · 내가 차단함' : (p && blockedByUsers.has(p.id) ? ' · 상대가 차단함' : '');
-    $('cs').textContent = (p ? '개인 DM · 코드 ' + p.code : '개인 DM') + blockState;
+    $('cs').textContent = p ? '개인 DM · 코드 ' + p.code : '개인 DM';
   }
-  var peer = c.type === 'direct' ? otherOf(c) : null;
-  $('bl').hidden = !peer;
-  if (peer) {
-    $('bl').textContent = blockedUsers.has(peer.id) ? '차단 해제' : '차단';
-    $('bl').disabled = false;
-  }
-  setComposerBlocked(c);
 }
 function renderPanel() {
   var c = convs.get(active), box = $('pl');
@@ -915,10 +866,7 @@ function newMsg(type) {
            reply_preview: replyPreview, mention_user_ids: [], created_at: new Date().toISOString(), _st: 'sending' };
 }
 function sendText() {
-  if (!active || isDirectBlocked(convs.get(active))) {
-    if (active && isDirectBlocked(convs.get(active))) hint('차단 상태에서는 메시지를 보낼 수 없습니다.');
-    return;
-  }
+  if (!active) return;
   var text = inp.value.trim();
   if (!text || !beginOutgoingMessage()) return;
   var m = newMsg('text');
@@ -1269,7 +1217,6 @@ function startRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversation_events' }, function (p) {
       if (p.new && p.new.conversation_id === active) renderConversationEvent(p.new, true);
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'user_blocks' }, scheduleReload)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_pins' }, function (p) {
       var row = p.new || p.old;
       if (row && row.conversation_id === active) loadPins(active, loadTok);
@@ -1386,7 +1333,6 @@ function errText(e) {
   var s = msgOf(e);
   if (s.indexOf('user_not_found') >= 0) return '존재하지 않는 코드입니다.';
   if (s.indexOf('lookup_rate_limited') >= 0) return '코드 검색을 너무 많이 시도했습니다. 10분 후 다시 시도하세요.';
-  if (s.indexOf('user_blocked') >= 0) return '차단 관계에서는 친구 요청을 보낼 수 없습니다.';
   if (s.indexOf('self') >= 0) return '자신의 코드는 추가할 수 없습니다.';
   if (s.indexOf('invalid_code') >= 0) return '올바른 코드를 입력하세요.';
   if (s.indexOf('name_required') >= 0) return '이름을 입력하세요.';
@@ -1839,21 +1785,6 @@ function resetState() {
   vapidKey = ''; lastErr = ''; nbState = ''; notified = new Set(); $('toast').hidden = true;
   document.title = '서고챗';
 }
-async function logout() {
-  if (!confirm('로그아웃할까요?\n\n이 계정은 익명 계정이라 로그아웃하면 다시 로그인할 수 없습니다. 친구·방·대화 기록에 더 이상 접근할 수 없게 됩니다.')) return;
-  loggingOut = true;
-  try {                           // 이 기기의 푸시 구독 정리
-    var sub = await currentSub();
-    if (sub) { await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); }
-  } catch (e) {}
-  try { await sb.auth.signOut({ scope: 'local' }); } catch (e) {}   // 이 기기 세션만 종료
-  try { localStorage.removeItem('pm_me'); } catch (e) {}
-  lset('pm_had', false);
-  resetState();
-  loggingOut = false;
-  showReg('');
-}
-
 /* ---------- 시작 ---------- */
 function showReg(msg) {
   $('app').hidden = true;
@@ -1913,7 +1844,7 @@ async function start() {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
   });
   sb.auth.onAuthStateChange(function (ev) {                     // 콜백 안에서는 supabase 호출 금지
-    if (ev === 'SIGNED_OUT' && me && !loggingOut) {
+    if (ev === 'SIGNED_OUT' && me) {
       resetState();
       showReg('로그인 정보가 사라졌습니다. 이름을 입력하면 새 계정이 만들어집니다. (익명 계정은 복구할 수 없습니다)');
     }
@@ -1961,7 +1892,6 @@ function init() {
   $('nameb').addEventListener('click', editMyName);
   $('fh').addEventListener('click', function () { toggleListSection('friends'); });
   $('rh').addEventListener('click', function () { toggleListSection('openRooms'); });
-  $('lo').addEventListener('click', logout);
   $('nb').addEventListener('click', onNbClick);
   $('addb').addEventListener('click', function () {
     var p = $('addp'); p.hidden = !p.hidden;
@@ -1984,7 +1914,6 @@ function init() {
   $('cjn').addEventListener('submit', function (e) { e.preventDefault(); joinCodeRoom(); });
   $('rc').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); });
   $('rnm').addEventListener('click', renameRoom);
-  $('bl').addEventListener('click', toggleBlockActive);
   $('pb').addEventListener('click', function () {
     var p = $('pl'); panelOpen = p.hidden;
     p.hidden = !panelOpen;
