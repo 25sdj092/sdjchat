@@ -137,9 +137,7 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 }
 
 #rnm{font-size:12px;padding:2px 8px}
-#lv,#bl{font-size:12px;padding:2px 8px}
-#bl{border-color:#f0b7b7;color:#b91c1c}
-#bl:hover{background:#fef2f2}
+#lv{font-size:12px;padding:2px 8px}
 
 /* 방 생성 패널 */
 #roomp{max-height:48vh;overflow-y:auto}
