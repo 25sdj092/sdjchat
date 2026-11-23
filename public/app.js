@@ -7,6 +7,7 @@ var PAGE = 30;                   // 한 번에 불러오는 메시지 수
 var DOM_CAP = 300;               // 화면에 유지하는 최대 말풍선 수
 var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
+var PHOTO_CLEANUP_ROOM_ID = 'a740e2d9-ed28-40ef-aefb-74e313917b21';
 var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at,reply_to,reply_sender_id,reply_preview,mention_user_ids';
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -281,6 +282,7 @@ function updateHeader() {
   var c = convs.get(active);
   if (!c) return;
   $('cn').textContent = convName(c);
+  $('rph').hidden = !(c.id === PHOTO_CLEANUP_ROOM_ID && c.owner === me.id);
   if (c.type === 'open' || c.type === 'group') {
     var o = c.members.get(c.owner);
     var kind = c.type === 'open' ? '오픈채팅' : '6자리 코드방';
@@ -1498,6 +1500,46 @@ async function renameRoom() {
   await reload();
   hint('방 이름을 수정했습니다.');
 }
+async function deleteRoomPhotos() {
+  var c = convs.get(active);
+  if (!c || c.id !== PHOTO_CLEANUP_ROOM_ID || c.owner !== me.id) return;
+  if (!confirm('"' + c.name + '" 방에 첨부된 사진을 모두 삭제할까요?\n\n사진 파일은 복구할 수 없습니다. 채팅 기록에는 "사진이 삭제되었습니다."라고 표시됩니다.')) return;
+
+  $('rph').disabled = true;
+  try {
+    var listing = await sb.storage.from(BUCKET).list(c.id, { limit: 1000 });
+    if (listing.error) {
+      hint('사진 목록을 불러오지 못했습니다. 다시 시도하세요.');
+      return;
+    }
+
+    var paths = (listing.data || [])
+      .filter(function (x) { return x.name && /\.(jpe?g|png|webp|gif)$/i.test(x.name); })
+      .map(function (x) { return c.id + '/' + x.name; });
+
+    if (paths.length) {
+      var removed = await sb.storage.from(BUCKET).remove(paths);
+      if (removed.error) {
+        hint('사진 파일을 삭제하지 못했습니다. 방장 권한과 네트워크를 확인하세요.');
+        return;
+      }
+    }
+
+    var marked = await sb.rpc('mark_room_images_deleted', { p_conv: c.id });
+    if (marked.error) {
+      hint('사진 파일은 삭제했지만 채팅 표시를 정리하지 못했습니다. 새로고침 후 다시 확인하세요.');
+      return;
+    }
+
+    openChat(c.id);
+    hint(paths.length + '개의 사진 파일을 삭제했습니다.');
+  } catch (e) {
+    hint('사진 삭제 중 오류가 발생했습니다.');
+  } finally {
+    $('rph').disabled = false;
+  }
+}
+
 async function roomAction() {
   var c = convs.get(active);
   if (!c || c.type === 'direct') return;
@@ -1914,6 +1956,7 @@ function init() {
   $('cjn').addEventListener('submit', function (e) { e.preventDefault(); joinCodeRoom(); });
   $('rc').addEventListener('input', function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); });
   $('rnm').addEventListener('click', renameRoom);
+  $('rph').addEventListener('click', deleteRoomPhotos);
   $('pb').addEventListener('click', function () {
     var p = $('pl'); panelOpen = p.hidden;
     p.hidden = !panelOpen;
