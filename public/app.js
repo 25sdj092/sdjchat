@@ -311,7 +311,8 @@ function hint(t) {
 function updateHeader() {
   var c = convs.get(active);
   if (!c) return;
-  $('cn').textContent = convName(c);
+  if (c.type === 'direct') { var peer = otherOf(c); setAdminName($('cn'), peer ? peer.id : null, convName(c)); }
+  else $('cn').textContent = convName(c);
   $('rph').hidden = !(c.id === PHOTO_CLEANUP_ROOM_ID && c.owner === me.id);
   if (c.type === 'open' || c.type === 'group') {
     var o = c.members.get(c.owner);
@@ -608,7 +609,7 @@ function addEntry(m) {
   d.dataset.id = m.id;
   d.dataset.createdAt = m.created_at || '';
   var col = el('div', 'col'), sn = null, pg = null;
-  if (!mine && c && (c.type === 'open' || c.type === 'group')) {
+  if (!mine && c && ((c.type === 'open' || c.type === 'group') || adminIds.has(m.sender_id))) {
     sn = el('div', 'sn'); setAdminName(sn, m.sender_id, nameOf(c, m.sender_id)); col.appendChild(sn);
   }
   if (m.reply_to && m.reply_preview) {
