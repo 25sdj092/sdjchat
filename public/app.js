@@ -375,9 +375,9 @@ function openChat(id) {
   reactionsByMessage = new Map();
   var isRoom = c.type === 'open' || c.type === 'group';
   $('pb').hidden = !isRoom;
-  $('lv').hidden = !isRoom;
+  $('lv').hidden = !isRoom && !isAdmin();
   $('rnm').hidden = !isRoom || (c.owner !== me.id && !isAdmin());
-  $('lv').textContent = (c.owner === me.id || isAdmin()) ? '방 삭제' : '나가기';
+  $('lv').textContent = c.type === 'direct' ? '대화 삭제' : ((c.owner === me.id || isAdmin()) ? '방 삭제' : '나가기');
   updateHeader();
   hint('');
   shown = new Map(); queued = [];
@@ -1598,7 +1598,7 @@ async function deleteRoomPhotos() {
 
 async function roomAction() {
   var c = convs.get(active);
-  if (!c || c.type === 'direct') return;
+  if (!c || (c.type === 'direct' && !isAdmin())) return;
   if (c.owner !== me.id && !isAdmin()) {
     if (!confirm('"' + c.name + '" 방에서 나갈까요?')) return;
     var leave = await sb.rpc('leave_room', { p_conv: c.id });
@@ -1606,7 +1606,7 @@ async function roomAction() {
     showList(); await reload(); return;
   }
 
-  if (!confirm('"' + c.name + '" 방과 모든 메시지를 삭제합니다. 계속할까요?')) return;
+  if (!confirm('"' + c.name + '" 대화와 모든 메시지를 삭제합니다. 계속할까요?')) return;
   var phrase = prompt('방을 삭제하려면 아래 문구를 그대로 입력하세요.\n\n삭제하겠습니다');
   if (phrase === null) return;
   if (phrase !== '삭제하겠습니다') { hint('확인 문구가 일치하지 않아 삭제하지 않았습니다.'); return; }
