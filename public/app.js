@@ -242,11 +242,25 @@ function reload() {
   return loadP;
 }
 async function loadAll() {
-  var r1 = await sb.from('conversation_members')
-    .select('conversation_id,conversations(id,type,name,owner_id,room_code)')
-    .eq('user_id', me.id).is('left_at', null);
-  if (r1.error) throw r1.error;
-  var mine = r1.data.filter(function (x) { return x.conversations; });
+  var admins = await sb.rpc('list_admin_ids');
+  if (admins.error) throw admins.error;
+  adminIds = new Set((admins.data || []).map(String));
+
+  var mine;
+  if (isAdmin()) {
+    var allRooms = await sb.rpc('admin_list_conversations');
+    if (allRooms.error) throw allRooms.error;
+    mine = (allRooms.data || []).map(function (c) {
+      return { conversation_id: c.id, conversations: c };
+    });
+  } else {
+    var r1 = await sb.from('conversation_members')
+      .select('conversation_id,conversations(id,type,name,owner_id,room_code)')
+      .eq('user_id', me.id).is('left_at', null);
+    if (r1.error) throw r1.error;
+    mine = r1.data.filter(function (x) { return x.conversations; });
+  }
+
   var ids = mine.map(function (x) { return x.conversation_id; });
   var res = await Promise.all([
     ids.length
@@ -255,11 +269,9 @@ async function loadAll() {
     sb.from('friendships').select('id,requester:profiles!friendships_requester_id_fkey(username,user_code)')
       .eq('receiver_id', me.id).eq('status', 'pending').order('created_at'),
     sb.rpc('conversation_summary'),
-    sb.rpc('list_open_rooms'),
-    sb.rpc('list_admin_ids')
+    sb.rpc('list_open_rooms')
   ]);
   for (var i = 0; i < res.length; i++) if (res[i].error) throw res[i].error;
-  adminIds = new Set((res[4].data || []).map(String));
   setAdminName($('myn'), me.id, me.name);
 
   var next = new Map();
