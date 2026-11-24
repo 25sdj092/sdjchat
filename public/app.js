@@ -35,6 +35,7 @@ var msEl, inp;
 var reactionsByMessage = new Map(), replyTarget = null;
 var conversationPins = [], loadedEventIds = new Set();
 var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
+var adminIds = new Set();
 var listSections = { friends: true, openRooms: true };
 
 function el(tag, cls, text) {
@@ -79,6 +80,18 @@ function nameOf(c, uid) {
   var m = c && c.members.get(uid);
   return m ? m.name : '알 수 없음';
 }
+function isAdmin() { return !!(me && adminIds.has(me.id)); }
+function setAdminName(node, uid, name) {
+  node.replaceChildren(document.createTextNode(name || '알 수 없음'));
+  if (uid && adminIds.has(uid)) {
+    var crown = new Image();
+    crown.className = 'admin-crown';
+    crown.src = '/admin-crown.svg';
+    crown.alt = '관리자';
+    crown.title = '관리자';
+    node.appendChild(crown);
+  }
+}
 function ts(x) { return x ? new Date(x).getTime() || 0 : 0; }
 
 /* ---------- 화면: 목록 ---------- */
@@ -94,7 +107,9 @@ function convItem(c) {
   var li = el('li', 'fr' + (active === c.id ? ' sel' : ''));
   var info = el('div', 'info');
   var o = otherOf(c);
-  info.appendChild(el('div', 'nm', convName(c)));
+  var friendName = el('div', 'nm');
+  setAdminName(friendName, o ? o.id : null, convName(c));
+  info.appendChild(friendName);
   var online = !!(o && onlineUsers.has(o.id));
   info.appendChild(el('div', 'presence-status ' + (online ? 'online' : 'offline'), online ? '온라인' : '오프라인'));
   info.appendChild(el('div', 'c', o ? o.code : ''));
@@ -240,9 +255,12 @@ async function loadAll() {
     sb.from('friendships').select('id,requester:profiles!friendships_requester_id_fkey(username,user_code)')
       .eq('receiver_id', me.id).eq('status', 'pending').order('created_at'),
     sb.rpc('conversation_summary'),
-    sb.rpc('list_open_rooms')
+    sb.rpc('list_open_rooms'),
+    sb.rpc('list_admin_ids')
   ]);
   for (var i = 0; i < res.length; i++) if (res[i].error) throw res[i].error;
+  adminIds = new Set((res[4].data || []).map(String));
+  setAdminName($('myn'), me.id, me.name);
 
   var next = new Map();
   mine.forEach(function (row) {
@@ -308,8 +326,11 @@ function renderPanel() {
   var ul = document.createElement('ul');
   members.forEach(function (m) {
     var li = el('li', null, m.name + (m.id === me.id ? ' (나)' : ''));
+    var memberName = el('span', 'member-name');
+    setAdminName(memberName, m.id, m.name + (m.id === me.id ? ' (나)' : ''));
+    li.replaceChildren(memberName);
     if (m.id === c.owner) li.appendChild(el('span', 'own', '방장'));
-    if (c.owner === me.id && m.id !== me.id && m.id !== c.owner) {
+    if ((isAdmin() || c.owner === me.id) && m.id !== me.id && !adminIds.has(m.id)) {
       var kick = el('button', 'kick-member', '강퇴');
       kick.type = 'button';
       kick.addEventListener('click', function () { kickMember(c.id, m.id, m.name); });
@@ -343,8 +364,8 @@ function openChat(id) {
   var isRoom = c.type === 'open' || c.type === 'group';
   $('pb').hidden = !isRoom;
   $('lv').hidden = !isRoom;
-  $('rnm').hidden = !isRoom || c.owner !== me.id;
-  $('lv').textContent = c.owner === me.id ? '방 삭제' : '나가기';
+  $('rnm').hidden = !isRoom || (c.owner !== me.id && !isAdmin());
+  $('lv').textContent = (c.owner === me.id || isAdmin()) ? '방 삭제' : '나가기';
   updateHeader();
   hint('');
   shown = new Map(); queued = [];
@@ -576,7 +597,7 @@ function addEntry(m) {
   d.dataset.createdAt = m.created_at || '';
   var col = el('div', 'col'), sn = null, pg = null;
   if (!mine && c && (c.type === 'open' || c.type === 'group')) {
-    sn = el('div', 'sn', nameOf(c, m.sender_id)); col.appendChild(sn);
+    sn = el('div', 'sn'); setAdminName(sn, m.sender_id, nameOf(c, m.sender_id)); col.appendChild(sn);
   }
   if (m.reply_to && m.reply_preview) {
     var quote = el('div', 'reply-quote');
@@ -629,6 +650,13 @@ function addEntry(m) {
   });
   reactBtn.addEventListener('click', function () { picker.hidden = !picker.hidden; });
   actions.appendChild(replyBtn); actions.appendChild(pinBtn); actions.appendChild(reactBtn); actions.appendChild(picker);
+  if (isAdmin() && m.seq) {
+    var delBtn = el('button', 'admin-delete-btn', '삭제');
+    delBtn.type = 'button';
+    delBtn.title = '관리자 메시지 삭제';
+    delBtn.addEventListener('click', function () { adminDeleteMessage(m); });
+    actions.appendChild(delBtn);
+  }
   col.appendChild(actions);
   var reactionRow = el('div', 'reaction-row');
   reactionRow.hidden = true;
@@ -669,7 +697,7 @@ function refreshNums() {
 }
 function refreshNames() {
   shown.forEach(function (en) {
-    if (en.sn) en.sn.textContent = nameOf(convs.get(en.m.conversation_id), en.m.sender_id);
+    if (en.sn) setAdminName(en.sn, en.m.sender_id, nameOf(convs.get(en.m.conversation_id), en.m.sender_id));
   });
 }
 function isPinned(messageId) {
@@ -1474,9 +1502,11 @@ async function editMyName() {
 }
 async function kickMember(convId, userId, userName) {
   var c = convs.get(convId);
-  if (!c || c.owner !== me.id || userId === me.id) return;
+  if (!c || (!isAdmin() && c.owner !== me.id) || userId === me.id || adminIds.has(userId)) return;
   if (!confirm('"' + userName + '"님을 이 방에서 강퇴할까요?\n강퇴된 사용자는 3일 동안 이 방에 다시 입장할 수 없습니다.')) return;
-  var result = await sb.rpc('kick_room_member', { p_conv: convId, p_user: userId });
+  var result = isAdmin()
+    ? await sb.rpc('admin_kick_member', { p_conv: convId, p_user: userId })
+    : await sb.rpc('kick_room_member', { p_conv: convId, p_user: userId });
   if (result.error) {
     var message = msgOf(result.error);
     hint(message.indexOf('room_owner_only') >= 0 ? '방장만 강퇴할 수 있습니다.' : '참여자를 강퇴하지 못했습니다.');
@@ -1489,7 +1519,7 @@ async function kickMember(convId, userId, userName) {
 
 async function renameRoom() {
   var c = convs.get(active);
-  if (!c || c.type === 'direct' || c.owner !== me.id) return;
+  if (!c || c.type === 'direct' || (!isAdmin() && c.owner !== me.id)) return;
   var next = prompt('새 방 이름을 입력하세요. (최대 30자)', c.name);
   if (next === null) return;
   next = next.trim();
@@ -1500,6 +1530,20 @@ async function renameRoom() {
   await reload();
   hint('방 이름을 수정했습니다.');
 }
+async function adminDeleteMessage(m) {
+  if (!isAdmin() || !m || !m.id) return;
+  if (!confirm('이 메시지를 모든 참여자에게서 삭제할까요?')) return;
+  if (m.message_type === 'image' && m.storage_path) {
+    var removed = await sb.storage.from(BUCKET).remove([m.storage_path]);
+    if (removed.error) { hint('사진 파일 삭제에 실패했습니다.'); return; }
+  }
+  var r = await sb.rpc('admin_delete_message', { p_message: m.id });
+  if (r.error) { hint('메시지를 삭제하지 못했습니다.'); return; }
+  var cid = m.conversation_id;
+  if (active === cid) openChat(cid);
+  hint('메시지를 삭제했습니다.');
+}
+
 async function deleteRoomPhotos() {
   var c = convs.get(active);
   if (!c || c.id !== PHOTO_CLEANUP_ROOM_ID || c.owner !== me.id) return;
@@ -1543,7 +1587,7 @@ async function deleteRoomPhotos() {
 async function roomAction() {
   var c = convs.get(active);
   if (!c || c.type === 'direct') return;
-  if (c.owner !== me.id) {
+  if (c.owner !== me.id && !isAdmin()) {
     if (!confirm('"' + c.name + '" 방에서 나갈까요?')) return;
     var leave = await sb.rpc('leave_room', { p_conv: c.id });
     if (leave.error) { hint('방에서 나가지 못했습니다.'); return; }
@@ -1565,7 +1609,9 @@ async function roomAction() {
     if (removed.error) { hint('방 사진 삭제에 실패해 방을 삭제하지 않았습니다.'); return; }
   }
 
-  var r = await sb.rpc('delete_room', { p_conv: c.id, p_confirmation: phrase });
+  var r = isAdmin()
+    ? await sb.rpc('admin_delete_room', { p_conv: c.id, p_confirmation: phrase })
+    : await sb.rpc('delete_room', { p_conv: c.id, p_confirmation: phrase });
   if (r.error) { hint('방을 삭제하지 못했습니다.'); return; }
   showList();
   await reload();
@@ -1864,7 +1910,7 @@ async function register(name) {
 function enter() {
   $('reg').hidden = true;
   $('app').hidden = false;
-  $('myn').textContent = me.name;
+  setAdminName($('myn'), me.id, me.name);
   $('myc').textContent = me.code;
   renderLists(); renderReqs();
   setNet(false, '서버 연결 중…');
