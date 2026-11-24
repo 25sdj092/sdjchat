@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+<rect width="500" height="500" fill="#fff"/>
+<path d="M204 361 C125 351 52 318 40 256 C24 171 80 112 166 94 C260 73 356 102 420 151 C469 188 469 261 434 306 C399 351 322 378 252 365 C225 392 190 410 164 406 C146 404 155 391 171 379 Z" fill="#fff" stroke="#080808" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="250" y="277" text-anchor="middle" font-family="Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif" font-size="91" font-weight="900" letter-spacing="-5" fill="#4389e8">서고챗</text>
+</svg>
