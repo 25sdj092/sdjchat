@@ -37,7 +37,7 @@ var audioUrls = new Map();       // 음성 Signed URL 캐시
 var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld = false, stick = true;
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
-var voiceRecorder = null, voiceStream = null, voiceParts = [], voiceMime = '', voiceStartedAt = 0, voiceTimer = null, voiceCancelled = false, voiceStarting = false;
+var voiceRecorder = null, voiceStream = null, voiceParts = [], voiceMime = '', voiceStartedAt = 0, voiceTimer = null, voiceCancelled = false, voiceStarting = false, voiceConversationId = null;
 var reactionsByMessage = new Map(), replyTarget = null;
 var conversationPins = [], loadedEventIds = new Set();
 var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
@@ -624,7 +624,7 @@ function addEntry(m) {
     quote.appendChild(el('span', 'reply-quote-text', m.reply_preview));
     col.appendChild(quote);
   }
-  var b = el('div', 'b');
+  var b = el('div', 'b'), audioPlayer = null;
   if (m.message_type === 'image' || m.message_type === 'gif') {
     b.className = 'b img' + (m.message_type === 'gif' ? ' gif' : '');
     var im = new Image();
@@ -647,6 +647,7 @@ function addEntry(m) {
   } else if (m.message_type === 'audio') {
     b.className = 'b audio';
     var player = el('audio', 'voice-player');
+    audioPlayer = player;
     player.controls = true;
     player.preload = 'none';
     player.setAttribute('controlsList', 'nodownload');
@@ -696,7 +697,7 @@ function addEntry(m) {
   rt.type = 'button'; rt.hidden = true;
   meta.appendChild(u); meta.appendChild(rt); meta.appendChild(t);
   d.appendChild(col); d.appendChild(meta);
-  var en = { m: m, el: d, sn: sn, u: u, rt: rt, t: t, pg: pg, reactionRow: reactionRow, picker: picker, replyBtn: replyBtn, pinBtn: pinBtn };
+  var en = { m: m, el: d, sn: sn, u: u, rt: rt, t: t, pg: pg, audioPlayer: audioPlayer, reactionRow: reactionRow, picker: picker, replyBtn: replyBtn, pinBtn: pinBtn };
   rt.addEventListener('click', function () { retry(en.m); });
   shown.set(m.id, en);
   renderReactionBar(en);
@@ -1085,15 +1086,17 @@ function audioTypeOf(recorderType) {
   var mime = String(recorderType || '').toLowerCase().split(';')[0].trim();
   return AUDIO_EXT[mime] ? mime : null;
 }
-function sendAudioBlob(blob, mime) {
-  if (!active) return;
+function sendAudioBlob(blob, mime, conversationId) {
+  var targetConversation = conversationId || active;
+  if (!targetConversation || !convs.has(targetConversation)) return hint('녹음한 대화방에 더 이상 접근할 수 없습니다.');
   mime = audioTypeOf(mime || blob.type);
   if (!mime) return hint('이 브라우저의 녹음 형식을 지원하지 않습니다.');
   if (!blob || blob.size < 1) return hint('녹음된 음성이 없습니다.');
   if (blob.size > MAX_AUDIO) return hint('음성 메시지는 10MB 이하만 보낼 수 있습니다.');
   if (!beginOutgoingMessage()) return;
   var m = newMsg('audio');
-  m.storage_path = active + '/' + uuid() + '.' + AUDIO_EXT[mime];
+  m.conversation_id = targetConversation;
+  m.storage_path = targetConversation + '/' + uuid() + '.' + AUDIO_EXT[mime];
   m.mime_type = mime;
   m.file_size = blob.size;
   m._file = blob;
@@ -1114,6 +1117,10 @@ async function uploadAudio(m) {
     });
     if (result.error) throw result.error;
     m._up = true;
+    if (m._audioBlob) { URL.revokeObjectURL(m._audioBlob); m._audioBlob = null; }
+    await signAudioMany([m]);
+    en = shown.get(m.id);
+    if (en && en.audioPlayer) setAudioSrc(en.audioPlayer, m);
   } catch (e) {
     m._st = 'failed';
     en = shown.get(m.id); if (en) paint(en);
@@ -1161,6 +1168,7 @@ async function toggleVoiceRecording() {
     var recorder = new MediaRecorder(stream, selected ? { mimeType: selected } : undefined);
     voiceRecorder = recorder;
     voiceStream = stream;
+    voiceConversationId = active;
     voiceParts = [];
     voiceCancelled = false;
     voiceStartedAt = Date.now();
@@ -1191,8 +1199,10 @@ async function toggleVoiceRecording() {
       $('recordingBar').hidden = true;
       $('voiceb').textContent = '음성';
       $('voiceb').classList.remove('recording');
+      var recordedConversation = voiceConversationId;
+      voiceConversationId = null;
       if (cancelled) { hint('녹음을 취소했습니다.'); return; }
-      sendAudioBlob(blob, finalType);
+      sendAudioBlob(blob, finalType, recordedConversation);
     });
     recorder.start(400);
     voiceTimer = setInterval(updateVoiceRecordingStatus, 500);
