@@ -652,6 +652,16 @@ function addEntry(m) {
     player.preload = 'none';
     player.setAttribute('controlsList', 'nodownload');
     player.setAttribute('aria-label', '음성 메시지 재생');
+    player.addEventListener('error', function () {
+      if (player._retried || m._audioBlob) return;
+      player._retried = true;
+      audioUrls.delete(m.storage_path);
+      signAudioMany([m]).then(function () {
+        var fresh = audioUrls.get(m.storage_path);
+        if (fresh && fresh.u) player.src = fresh.u;
+      });
+    });
+    player.addEventListener('canplay', function () { player._retried = false; });
     if (m._audioBlob) player.src = m._audioBlob;
     else setAudioSrc(player, m);
     b.appendChild(player);
