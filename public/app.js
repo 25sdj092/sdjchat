@@ -7,6 +7,10 @@ var PAGE = 30;                   // 한 번에 불러오는 메시지 수
 var DOM_CAP = 300;               // 화면에 유지하는 최대 말풍선 수
 var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
+var AUDIO_BUCKET = 'chat-audio';
+var MAX_AUDIO = 10 * 1024 * 1024;
+var MAX_RECORD_MS = 5 * 60 * 1000;
+var AUDIO_EXT = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3' };
 var PHOTO_CLEANUP_ROOM_ID = 'a740e2d9-ed28-40ef-aefb-74e313917b21';
 var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 var COLS = 'id,seq,conversation_id,sender_id,content,message_type,storage_path,mime_type,file_size,created_at,reply_to,reply_sender_id,reply_preview,mention_user_ids';
@@ -28,10 +32,12 @@ var reqs = [];                   // 받은 친구 요청 [{id,name,code}]
 var active = null;               // 열려 있는 대화방 id
 var shown = new Map();           // 화면에 있는 메시지 id -> entry
 var outbox = new Map();          // 전송 중/실패 메시지 (메모리)
-var urls = new Map();            // storage 경로 -> {u, exp} (Signed URL 캐시)
+var urls = new Map();            // 이미지 Signed URL 캐시
+var audioUrls = new Map();       // 음성 Signed URL 캐시
 var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld = false, stick = true;
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
+var voiceRecorder = null, voiceStream = null, voiceParts = [], voiceMime = '', voiceStartedAt = 0, voiceTimer = null, voiceCancelled = false, voiceStarting = false;
 var reactionsByMessage = new Map(), replyTarget = null;
 var conversationPins = [], loadedEventIds = new Set();
 var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
@@ -548,7 +554,7 @@ function setReplyInput(m) {
   if (!m || !m.seq) return hint('전송이 완료된 메시지에만 답글을 달 수 있습니다.');
   replyTarget = m;
   var c = convs.get(m.conversation_id);
-  var preview = m.message_type === 'image' ? '사진' : m.message_type === 'gif' ? 'GIF' : String(m.content || '').replace(/\s+/g, ' ').trim();
+  var preview = m.message_type === 'image' ? '사진' : m.message_type === 'gif' ? 'GIF' : m.message_type === 'audio' ? '음성 메시지' : String(m.content || '').replace(/\s+/g, ' ').trim();
   $('replyText').textContent = nameOf(c, m.sender_id) + ': ' + preview.slice(0, 90);
   $('replying').hidden = false;
   hideMentionMenu();
@@ -638,6 +644,17 @@ function addEntry(m) {
     }
     b.appendChild(im);
     if (m._st === 'sending') { pg = el('div', 'pg'); b.appendChild(pg); }
+  } else if (m.message_type === 'audio') {
+    b.className = 'b audio';
+    var player = el('audio', 'voice-player');
+    player.controls = true;
+    player.preload = 'none';
+    player.setAttribute('controlsList', 'nodownload');
+    player.setAttribute('aria-label', '음성 메시지 재생');
+    if (m._audioBlob) player.src = m._audioBlob;
+    else setAudioSrc(player, m);
+    b.appendChild(player);
+    if (m._st === 'sending') { pg = el('div', 'pg', '음성 업로드 중…'); b.appendChild(pg); }
   } else renderMessageText(b, m, c);
   col.appendChild(b);
 
@@ -735,7 +752,7 @@ function renderPins() {
   box.appendChild(el('span', 'pins-label', '고정'));
   conversationPins.forEach(function (pin) {
     var msg = pin.message || {};
-    var preview = msg.message_type === 'image' ? '사진' : msg.message_type === 'gif' ? 'GIF' : String(msg.content || '메시지').replace(/\s+/g, ' ').slice(0, 60);
+    var preview = msg.message_type === 'image' ? '사진' : msg.message_type === 'gif' ? 'GIF' : msg.message_type === 'audio' ? '음성 메시지' : String(msg.content || '메시지').replace(/\s+/g, ' ').slice(0, 60);
     var item = el('div', 'pin-item');
     var jump = el('button', 'pin-jump', (nameOf(convs.get(active), msg.sender_id) || '메시지') + ' · ' + preview);
     jump.type = 'button';
@@ -855,15 +872,32 @@ function appendMsg(m) {
 
 /* ---------- Signed URL / 사진 보기 ---------- */
 function urlOf(p) { var e = urls.get(p); return e && e.exp > Date.now() + 60000 ? e.u : null; }
+async function signAudioMany(arr) {
+  var need = [];
+  arr.forEach(function (m) {
+    var cached = audioUrls.get(m.storage_path);
+    if (m.message_type === 'audio' && m.storage_path && !m._audioBlob &&
+        (!cached || cached.exp <= Date.now() + 60000) && need.indexOf(m.storage_path) < 0) need.push(m.storage_path);
+  });
+  if (!need.length) return;
+  var r = await sb.storage.from(AUDIO_BUCKET).createSignedUrls(need, 3600);
+  if (r.error || !r.data) return;
+  r.data.forEach(function (x) {
+    if (x.signedUrl && x.path) audioUrls.set(x.path, { u: x.signedUrl, exp: Date.now() + 3600000 });
+  });
+}
 async function signMany(arr) {
   var need = [];
   arr.forEach(function (m) {
     if (m.message_type === 'image' && m.storage_path && !m._blob && !urlOf(m.storage_path) && need.indexOf(m.storage_path) < 0) need.push(m.storage_path);
   });
-  if (!need.length) return;
-  var r = await sb.storage.from(BUCKET).createSignedUrls(need, 3600);
-  if (r.error || !r.data) return;
-  r.data.forEach(function (x) { if (x.signedUrl && x.path) urls.set(x.path, { u: x.signedUrl, exp: Date.now() + 3600000 }); });
+  if (need.length) {
+    var r = await sb.storage.from(BUCKET).createSignedUrls(need, 3600);
+    if (!r.error && r.data) r.data.forEach(function (x) {
+      if (x.signedUrl && x.path) urls.set(x.path, { u: x.signedUrl, exp: Date.now() + 3600000 });
+    });
+  }
+  await signAudioMany(arr);
 }
 function setSrc(im, m) {
   if (m._blob) { im.src = m._blob; return; }
@@ -872,6 +906,16 @@ function setSrc(im, m) {
   signMany([m]).then(function () {
     var u2 = urlOf(m.storage_path);
     if (u2) im.src = u2; else im.alt = '사진을 불러오지 못했습니다';
+  });
+}
+function setAudioSrc(player, m) {
+  if (m._audioBlob) { player.src = m._audioBlob; return; }
+  var cached = audioUrls.get(m.storage_path);
+  if (cached && cached.exp > Date.now() + 60000) { player.src = cached.u; return; }
+  signAudioMany([m]).then(function () {
+    var fresh = audioUrls.get(m.storage_path);
+    if (fresh && fresh.u && !player.src) player.src = fresh.u;
+    else if (fresh && fresh.u) player.src = fresh.u;
   });
 }
 function openLb(src) {
@@ -902,7 +946,7 @@ function fitInput() {
 }
 function newMsg(type) {
   var target = replyTarget, c = convs.get(active);
-  var replyPreview = target ? (target.message_type === 'image' ? '사진' : target.message_type === 'gif' ? 'GIF' : String(target.content || '').replace(/\s+/g, ' ').trim().slice(0, 90)) : null;
+  var replyPreview = target ? (target.message_type === 'image' ? '사진' : target.message_type === 'gif' ? 'GIF' : target.message_type === 'audio' ? '음성 메시지' : String(target.content || '').replace(/\s+/g, ' ').trim().slice(0, 90)) : null;
   return { id: uuid(), seq: null, conversation_id: active, sender_id: me.id, content: '', message_type: type,
            storage_path: null, mime_type: null, file_size: null,
            reply_to: target ? target.id : null, reply_sender_id: target ? target.sender_id : null,
@@ -925,7 +969,9 @@ function retry(m) {
     hint('도배 방지를 위해 잠깐 기다린 뒤 다시 보내 주세요.');
     return;
   }
-  if (m.message_type === 'image' && !m._up) upload(m); else post(m);
+  if (m.message_type === 'image' && !m._up) upload(m);
+  else if (m.message_type === 'audio' && !m._up) uploadAudio(m);
+  else post(m);
 }
 async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전송 완료'로 표시한다
   outbox.set(m.id, m);
@@ -933,7 +979,7 @@ async function post(m) {         // 서버(DB) 저장이 끝난 뒤에만 '전�
   var en = shown.get(m.id); if (en) paint(en);
   var row = { id: m.id, conversation_id: m.conversation_id, content: m.content, message_type: m.message_type,
     reply_to: m.reply_to || null, mention_user_ids: m.mention_user_ids || [] };
-  if (m.message_type === 'image') { row.storage_path = m.storage_path; row.mime_type = m.mime_type; row.file_size = m.file_size; }
+  if (m.message_type === 'image' || m.message_type === 'audio') { row.storage_path = m.storage_path; row.mime_type = m.mime_type; row.file_size = m.file_size; }
   var returned = 'seq,created_at,reply_sender_id,reply_preview,mention_user_ids';
   var r = await sb.from('messages').insert(row).select(returned).single();
   if (r.error && r.error.code === '23505') r = await sb.from('messages').select(returned).eq('id', m.id).single();   // 이미 저장된 메시지(재시도)
@@ -1032,6 +1078,135 @@ async function putObject(m) {     // XHR 로 올려서 진행률을 얻는다. �
     x.ontimeout = function () { rej(new Error('timeout')); };
     x.send(m._file);
   });
+}
+
+/* ---------- 음성 메시지 ---------- */
+function audioTypeOf(recorderType) {
+  var mime = String(recorderType || '').toLowerCase().split(';')[0].trim();
+  return AUDIO_EXT[mime] ? mime : null;
+}
+function sendAudioBlob(blob, mime) {
+  if (!active) return;
+  mime = audioTypeOf(mime || blob.type);
+  if (!mime) return hint('이 브라우저의 녹음 형식을 지원하지 않습니다.');
+  if (!blob || blob.size < 1) return hint('녹음된 음성이 없습니다.');
+  if (blob.size > MAX_AUDIO) return hint('음성 메시지는 10MB 이하만 보낼 수 있습니다.');
+  if (!beginOutgoingMessage()) return;
+  var m = newMsg('audio');
+  m.storage_path = active + '/' + uuid() + '.' + AUDIO_EXT[mime];
+  m.mime_type = mime;
+  m.file_size = blob.size;
+  m._file = blob;
+  m._audioBlob = URL.createObjectURL(blob);
+  clearReplyInput(); hideMentionMenu(); hint('');
+  appendMsg(m);
+  uploadAudio(m);
+}
+async function uploadAudio(m) {
+  outbox.set(m.id, m);
+  m._st = 'sending';
+  var en = shown.get(m.id); if (en) paint(en);
+  try {
+    var result = await sb.storage.from(AUDIO_BUCKET).upload(m.storage_path, m._file, {
+      contentType: m.mime_type,
+      cacheControl: '3600',
+      upsert: false
+    });
+    if (result.error) throw result.error;
+    m._up = true;
+  } catch (e) {
+    m._st = 'failed';
+    en = shown.get(m.id); if (en) paint(en);
+    hint('음성 업로드에 실패했습니다. 재시도 버튼을 눌러 주세요.');
+    return;
+  }
+  post(m);
+}
+function recordTimeText(ms) {
+  var total = Math.floor(ms / 1000);
+  return ('0' + Math.floor(total / 60)).slice(-2) + ':' + ('0' + (total % 60)).slice(-2);
+}
+function stopVoiceRecording(cancel) {
+  if (!voiceRecorder) return;
+  if (cancel) voiceCancelled = true;
+  if (voiceRecorder.state !== 'inactive') voiceRecorder.stop();
+}
+function updateVoiceRecordingStatus() {
+  if (!voiceRecorder || voiceRecorder.state !== 'recording') return;
+  var elapsed = Date.now() - voiceStartedAt;
+  $('recordingText').textContent = '녹음 중 ' + recordTimeText(elapsed) + ' · 종료하면 전송됩니다';
+  if (elapsed >= MAX_RECORD_MS) {
+    hint('최대 녹음 시간 5분에 도달했습니다. 음성을 전송합니다.');
+    stopVoiceRecording(false);
+  }
+}
+async function toggleVoiceRecording() {
+  if (voiceRecorder && voiceRecorder.state === 'recording') {
+    stopVoiceRecording(false);
+    return;
+  }
+  if (voiceStarting || voiceRecorder) return;
+  if (!active) return hint('대화방을 먼저 선택하세요.');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    return hint('이 브라우저에서는 음성 녹음을 지원하지 않습니다.');
+  }
+  voiceStarting = true;
+  try {
+    var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    var choices = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    var selected = '';
+    for (var i = 0; i < choices.length; i++) {
+      if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(choices[i])) { selected = choices[i]; break; }
+    }
+    var recorder = new MediaRecorder(stream, selected ? { mimeType: selected } : undefined);
+    voiceRecorder = recorder;
+    voiceStream = stream;
+    voiceParts = [];
+    voiceCancelled = false;
+    voiceStartedAt = Date.now();
+    voiceMime = recorder.mimeType || selected || 'audio/webm';
+    $('recordingBar').hidden = false;
+    $('recordingText').textContent = '녹음 중 00:00 · 종료하면 전송됩니다';
+    $('voiceb').textContent = '녹음 종료 · 전송';
+    $('voiceb').classList.add('recording');
+    recorder.addEventListener('dataavailable', function (event) {
+      if (event.data && event.data.size) voiceParts.push(event.data);
+    });
+    recorder.addEventListener('error', function () {
+      voiceCancelled = true;
+      hint('음성 녹음 중 오류가 발생했습니다.');
+      if (recorder.state !== 'inactive') recorder.stop();
+    });
+    recorder.addEventListener('stop', function () {
+      var cancelled = voiceCancelled;
+      var finalType = audioTypeOf(recorder.mimeType || voiceMime) || 'audio/webm';
+      var blob = new Blob(voiceParts, { type: finalType });
+      voiceParts = [];
+      if (voiceTimer) { clearInterval(voiceTimer); voiceTimer = null; }
+      if (voiceStream) voiceStream.getTracks().forEach(function (track) { track.stop(); });
+      voiceStream = null;
+      voiceRecorder = null;
+      voiceMime = '';
+      voiceStartedAt = 0;
+      $('recordingBar').hidden = true;
+      $('voiceb').textContent = '음성';
+      $('voiceb').classList.remove('recording');
+      if (cancelled) { hint('녹음을 취소했습니다.'); return; }
+      sendAudioBlob(blob, finalType);
+    });
+    recorder.start(400);
+    voiceTimer = setInterval(updateVoiceRecordingStatus, 500);
+    updateVoiceRecordingStatus();
+  } catch (e) {
+    if (voiceStream) voiceStream.getTracks().forEach(function (track) { track.stop(); });
+    voiceStream = null; voiceRecorder = null; voiceParts = []; voiceMime = '';
+    $('recordingBar').hidden = true;
+    $('voiceb').textContent = '음성';
+    $('voiceb').classList.remove('recording');
+    hint(e && e.name === 'NotAllowedError' ? '마이크 권한을 허용해야 녹음할 수 있습니다.' : '마이크에 접근하지 못했습니다.');
+  } finally {
+    voiceStarting = false;
+  }
 }
 
 /* ---------- GIPHY 검색 및 GIF 메시지 ---------- */
@@ -1546,9 +1721,9 @@ async function renameRoom() {
 async function adminDeleteMessage(m) {
   if (!isAdmin() || !m || !m.id) return;
   if (!confirm('이 메시지를 모든 참여자에게서 삭제할까요?')) return;
-  if (m.message_type === 'image' && m.storage_path) {
-    var removed = await sb.storage.from(BUCKET).remove([m.storage_path]);
-    if (removed.error) { hint('사진 파일 삭제에 실패했습니다.'); return; }
+  if ((m.message_type === 'image' || m.message_type === 'audio') && m.storage_path) {
+    var removed = await sb.storage.from(m.message_type === 'audio' ? AUDIO_BUCKET : BUCKET).remove([m.storage_path]);
+    if (removed.error) { hint(m.message_type === 'audio' ? '음성 파일 삭제에 실패했습니다.' : '사진 파일 삭제에 실패했습니다.'); return; }
   }
   var r = await sb.rpc('admin_delete_message', { p_message: m.id });
   if (r.error) { hint('메시지를 삭제하지 못했습니다.'); return; }
@@ -1838,7 +2013,7 @@ async function notifyIncoming(c, m) {
   if (notified.size > 300) notified.delete(notified.values().next().value);
   var sender = nameOf(c, m.sender_id);
   var title = (c.type === 'open' || c.type === 'group') ? sender + ' · ' + c.name : sender;
-  var body = m.message_type === 'image' ? '사진을 보냈습니다.' : m.message_type === 'gif' ? 'GIF를 보냈습니다.' : String(m.content).replace(/\s+/g, ' ').trim().slice(0, 80);
+  var body = m.message_type === 'image' ? '사진을 보냈습니다.' : m.message_type === 'gif' ? 'GIF를 보냈습니다.' : m.message_type === 'audio' ? '음성 메시지를 보냈습니다.' : String(m.content).replace(/\s+/g, ' ').trim().slice(0, 80);
   var done = false;
   if (pushOk() && Notification.permission === 'granted') {
     try {
@@ -2027,6 +2202,8 @@ function init() {
   $('replyClear').addEventListener('click', clearReplyInput);
   $('at').addEventListener('click', function () { $('fi').click(); });
   $('gifb').addEventListener('click', openGifPicker);
+  $('voiceb').addEventListener('click', toggleVoiceRecording);
+  $('voiceCancel').addEventListener('click', function () { stopVoiceRecording(true); });
   $('gifClose').addEventListener('click', closeGifPicker);
   $('gifPicker').addEventListener('click', function (e) { if (e.target === $('gifPicker')) closeGifPicker(); });
   $('gifSearchBtn').addEventListener('click', searchGifs);
@@ -2038,9 +2215,26 @@ function init() {
     if (f) sendImage(f);
   });
   $('lb').addEventListener('click', closeLb);
+  document.addEventListener('pointerdown', function (e) {
+    var target = e.target;
+    if (!$('addp').hidden && !$('addp').contains(target) && !$('addb').contains(target)) $('addp').hidden = true;
+    if (!$('roomp').hidden && !$('roomp').contains(target) && !$('roomb').contains(target)) $('roomp').hidden = true;
+    if (!$('joinp').hidden && !$('joinp').contains(target) && !$('joinb').contains(target)) $('joinp').hidden = true;
+    if (panelOpen && !$('pl').contains(target) && !$('pb').contains(target)) { $('pl').hidden = true; panelOpen = false; }
+    if (!$('mentionMenu').hidden && target !== inp && !$('mentionMenu').contains(target)) hideMentionMenu();
+    msEl.querySelectorAll('.emoji-picker:not([hidden])').forEach(function (picker) {
+      var trigger = picker.parentNode.querySelector('.react-btn');
+      if (!picker.contains(target) && !(trigger && trigger.contains(target))) picker.hidden = true;
+    });
+  });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !$('lb').hidden) closeLb();
-    else if (e.key === 'Escape' && !$('gifPicker').hidden) closeGifPicker();
+    if (e.key !== 'Escape') return;
+    if (!$('lb').hidden) closeLb();
+    if (!$('gifPicker').hidden) closeGifPicker();
+    $('addp').hidden = true; $('roomp').hidden = true; $('joinp').hidden = true;
+    $('pl').hidden = true; panelOpen = false; hideMentionMenu();
+    msEl.querySelectorAll('.emoji-picker').forEach(function (picker) { picker.hidden = true; });
+    if (voiceRecorder && voiceRecorder.state === 'recording') stopVoiceRecording(true);
   });
   $('cf').addEventListener('submit', function (e) { e.preventDefault(); sendText(); inp.focus(); });
   inp.addEventListener('input', function () { fitInput(); updateMentionMenu(); });
