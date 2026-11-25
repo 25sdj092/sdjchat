@@ -715,7 +715,8 @@ function paint(en) {
   else if (st === 'failed') { en.u.className = 'u f'; en.u.textContent = '전송 실패'; }
   else { en.u.className = 'u'; paintNum(en); }
   if (en.pg) {
-    if (st === 'sending' && m._p != null && m._p < 100) en.pg.textContent = '업로드 ' + m._p + '%';
+    if (st === 'sending' && m.message_type === 'audio') en.pg.textContent = '음성 업로드 중…';
+    else if (st === 'sending' && m._p != null && m._p < 100) en.pg.textContent = '업로드 ' + m._p + '%';
     else { en.pg.remove(); en.pg = null; }
   }
 }
