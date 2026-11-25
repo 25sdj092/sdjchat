@@ -246,7 +246,6 @@ async function loadAll() {
   if (admins.error) throw admins.error;
   adminIds = new Set((admins.data || []).map(String));
   $('delLegacy').hidden = !isAdmin();
-  $('delLegacy').hidden = !isAdmin();
 
   var mine;
   if (isAdmin()) {
@@ -1938,50 +1937,6 @@ function enter() {
   initPush();
 }
 
-async function deleteLegacyAccount() {
-  if (!isAdmin()) return;
-  if (!confirm('기존 계정 양성규기존(코드 4809)을 완전히 삭제합니다.\n\n기존 DM 대화와 메시지, 친구 관계, 첨부 파일이 삭제됩니다.\n3반장애들과 시크릿모드방은 새 관리자 계정으로 소유권을 넘깁니다.')) return;
-  var phrase = prompt('실행하려면 양성규기존 삭제 를 입력하세요.');
-  if (phrase !== '양성규기존 삭제') return;
-  var b = $('delLegacy');
-  b.disabled = true;
-  b.textContent = '삭제 중…';
-  try {
-    var result = await sb.functions.invoke('delete-legacy-account', { body: {} });
-    if (result.error) throw result.error;
-    if (!result.data || result.data.success !== true) throw new Error((result.data && result.data.error) || '계정 삭제 결과를 확인하지 못했습니다.');
-    toast('기존 계정과 관련 데이터 삭제 완료');
-    await reload();
-    b.hidden = true;
-  } catch (e) {
-    toast('삭제 실패: ' + (e.message || e));
-    b.disabled = false;
-    b.textContent = '기존 양성규 계정 완전 삭제';
-  }
-}
-
-async function deleteLegacyAccount() {
-  if (!isAdmin()) return;
-  if (!confirm('기존 계정 양성규기존(코드 4809)을 완전히 삭제합니다. 기존 DM 대화와 메시지, 친구 관계, 첨부 파일이 삭제됩니다. 3반장애들과 시크릿모드방은 새 관리자 계정으로 소유권을 넘깁니다.')) return;
-  var phrase = prompt('실행하려면 양성규기존 삭제 를 입력하세요.');
-  if (phrase !== '양성규기존 삭제') return;
-  var b = $('delLegacy');
-  b.disabled = true;
-  b.textContent = '삭제 중…';
-  try {
-    var result = await sb.functions.invoke('delete-legacy-account', { body: {} });
-    if (result.error) throw result.error;
-    if (!result.data || result.data.success !== true) throw new Error((result.data && result.data.error) || '삭제 결과를 확인하지 못했습니다.');
-    toast('기존 계정과 관련 데이터 삭제 완료');
-    await reload();
-    b.hidden = true;
-  } catch (e) {
-    toast('삭제 실패: ' + (e.message || e));
-    b.disabled = false;
-    b.textContent = '기존 양성규 계정 완전 삭제';
-  }
-}
-
 async function start() {
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey || !window.supabase) {
     showReg('Supabase 설정이 없습니다. 환경변수(또는 public/config.js)를 확인하세요. README 8단계 참고');
@@ -2038,7 +1993,6 @@ function init() {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyText(me.code, null); }
   });
   $('nameb').addEventListener('click', editMyName);
-  $('delLegacy').addEventListener('click', deleteLegacyAccount);
   $('delLegacy').addEventListener('click', deleteLegacyAccount);
   $('fh').addEventListener('click', function () { toggleListSection('friends'); });
   $('rh').addEventListener('click', function () { toggleListSection('openRooms'); });
