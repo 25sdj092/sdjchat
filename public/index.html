@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20261124-2">
 <link rel="shortcut icon" href="/favicon.svg?v=20261124-2">
 <link rel="apple-touch-icon" href="/favicon.svg?v=20261124-2">
-<link rel="stylesheet" href="style.css?v=20261125-white-screen-fix">
+<link rel="stylesheet" href="style.css?v=20261125-voice-modal">
 </head>
 <body>
 
@@ -104,9 +104,11 @@
       <div id="hint"></div>
       <div id="replying" hidden><span id="replyText"></span><button id="replyClear" type="button" aria-label="답글 취소">취소</button></div>
       <div id="mentionMenu" hidden></div>
+      <div id="recordingBar" hidden><span class="recording-dot"></span><span id="recordingText">녹음 중 00:00 · 종료하면 전송됩니다</span><button id="voiceCancel" type="button">취소</button></div>
       <form id="cf">
         <button id="at" type="button" aria-label="사진 첨부">사진</button>
         <button id="gifb" type="button" aria-label="GIF 검색">GIF</button>
+        <button id="voiceb" type="button" aria-label="음성 녹음">음성</button>
         <input id="fi" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
         <textarea id="inp" rows="1" maxlength="2000" placeholder="메시지 입력" aria-label="메시지"></textarea>
         <button id="sd" class="pri" type="submit">전송</button>
@@ -129,6 +131,6 @@
 
 <script src="config.js"></script>
 <script src="supabase.js"></script>
-<script src="app.js?v=20261125-white-screen-fix"></script>
+<script src="app.js?v=20261125-voice-modal"></script>
 </body>
 </html>
