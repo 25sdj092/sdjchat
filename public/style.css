@@ -248,3 +248,20 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .member-name{display:inline-flex;align-items:center;gap:3px}
 .admin-delete-btn{color:#b42318;border-color:#efb4b0}
 .admin-delete-btn:hover{background:#fff0ef}
+
+/* 음성 메시지와 녹음 UI */
+#voiceb{padding:8px 9px;white-space:nowrap}
+#voiceb.recording{background:#fff0f0;border-color:#dc2626;color:#b91c1c}
+#recordingBar{display:flex;align-items:center;gap:8px;margin:0 14px 7px;padding:7px 10px;border:1px solid #fecaca;background:#fff7f7;border-radius:6px;color:#991b1b;font-size:12px}
+#recordingText{flex:1;min-width:0}
+.recording-dot{width:8px;height:8px;border-radius:50%;background:#dc2626;flex:none;animation:voice-pulse 1.1s ease-in-out infinite}
+#voiceCancel{padding:2px 8px;font-size:11px}
+.b.audio{min-width:min(270px,70vw);max-width:min(330px,76vw);padding:8px 10px;background:#f0f3f8;border-radius:12px}
+.voice-player{display:block;width:100%;height:38px}
+@keyframes voice-pulse{50%{opacity:.35}}
+@media(max-width:700px){
+  #recordingBar{margin-left:8px;margin-right:8px}
+  #cf{gap:5px;padding-left:8px;padding-right:8px}
+  #voiceb{padding-left:7px;padding-right:7px}
+  .b.audio{min-width:min(250px,72vw)}
+}
