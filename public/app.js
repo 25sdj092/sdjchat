@@ -1160,6 +1160,7 @@ async function toggleVoiceRecording() {
   voiceStarting = true;
   try {
     var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    voiceStream = stream;
     var choices = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'];
     var selected = '';
     for (var i = 0; i < choices.length; i++) {
@@ -1167,7 +1168,6 @@ async function toggleVoiceRecording() {
     }
     var recorder = new MediaRecorder(stream, selected ? { mimeType: selected } : undefined);
     voiceRecorder = recorder;
-    voiceStream = stream;
     voiceConversationId = active;
     voiceParts = [];
     voiceCancelled = false;
@@ -1209,7 +1209,7 @@ async function toggleVoiceRecording() {
     updateVoiceRecordingStatus();
   } catch (e) {
     if (voiceStream) voiceStream.getTracks().forEach(function (track) { track.stop(); });
-    voiceStream = null; voiceRecorder = null; voiceParts = []; voiceMime = '';
+    voiceStream = null; voiceRecorder = null; voiceParts = []; voiceMime = ''; voiceConversationId = null;
     $('recordingBar').hidden = true;
     $('voiceb').textContent = '음성';
     $('voiceb').classList.remove('recording');
