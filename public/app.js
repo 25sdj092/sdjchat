@@ -245,7 +245,6 @@ async function loadAll() {
   var admins = await sb.rpc('list_admin_ids');
   if (admins.error) throw admins.error;
   adminIds = new Set((admins.data || []).map(String));
-  $('delLegacy').hidden = !isAdmin();
 
   var mine;
   if (isAdmin()) {
@@ -1993,7 +1992,7 @@ function init() {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyText(me.code, null); }
   });
   $('nameb').addEventListener('click', editMyName);
-  $('delLegacy').addEventListener('click', deleteLegacyAccount);
+
   $('fh').addEventListener('click', function () { toggleListSection('friends'); });
   $('rh').addEventListener('click', function () { toggleListSection('openRooms'); });
   $('nb').addEventListener('click', onNbClick);
