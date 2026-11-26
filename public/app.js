@@ -9,7 +9,7 @@ var MAX_IMG = 10 * 1024 * 1024;  // 사진 최대 크기
 var BUCKET = 'chat-images';
 var AUDIO_BUCKET = 'chat-audio';
 var MAX_AUDIO = 10 * 1024 * 1024;
-var MAX_RECORD_MS = 5 * 60 * 1000;
+var MAX_RECORD_MS = 30 * 1000;
 var AUDIO_EXT = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3' };
 var PHOTO_CLEANUP_ROOM_ID = 'a740e2d9-ed28-40ef-aefb-74e313917b21';
 var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
@@ -37,7 +37,7 @@ var audioUrls = new Map();       // 음성 Signed URL 캐시
 var loadTok = 0, firstLoading = false, queued = [], hasMore = false, loadingOld = false, stick = true;
 var pendingOpen = null, panelOpen = false;
 var msEl, inp;
-var voiceRecorder = null, voiceStream = null, voiceParts = [], voiceMime = '', voiceStartedAt = 0, voiceTimer = null, voiceCancelled = false, voiceStarting = false, voiceConversationId = null;
+var voiceRecorder = null, voiceStream = null, voiceParts = [], voiceMime = '', voiceStartedAt = 0, voiceTimer = null, voiceLimitTimer = null, voiceCancelled = false, voiceStarting = false, voiceConversationId = null;
 var reactionsByMessage = new Map(), replyTarget = null;
 var conversationPins = [], loadedEventIds = new Set();
 var REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🎉','😡'];
@@ -1149,18 +1149,22 @@ function stopVoiceRecording(cancel) {
   if (cancel) voiceCancelled = true;
   if (voiceRecorder.state !== 'inactive') voiceRecorder.stop();
 }
+function finishVoiceRecording() {
+  if (!voiceRecorder) return;
+  $('voiceSend').disabled = true;
+  $('voiceSend').textContent = '전송 중';
+  stopVoiceRecording(false);
+}
 function updateVoiceRecordingStatus() {
   if (!voiceRecorder || voiceRecorder.state !== 'recording') return;
-  var elapsed = Date.now() - voiceStartedAt;
-  $('recordingText').textContent = '녹음 중 ' + recordTimeText(elapsed) + ' · 종료하면 전송됩니다';
-  if (elapsed >= MAX_RECORD_MS) {
-    hint('최대 녹음 시간 5분에 도달했습니다. 음성을 전송합니다.');
-    stopVoiceRecording(false);
-  }
+  var elapsed = Math.min(Date.now() - voiceStartedAt, MAX_RECORD_MS);
+  $('recordingText').textContent = recordTimeText(elapsed);
+  $('recordingProgress').style.width = Math.min(100, elapsed / MAX_RECORD_MS * 100) + '%';
+  if (elapsed >= MAX_RECORD_MS) finishVoiceRecording();
 }
 async function toggleVoiceRecording() {
   if (voiceRecorder && voiceRecorder.state === 'recording') {
-    stopVoiceRecording(false);
+    finishVoiceRecording();
     return;
   }
   if (voiceStarting || voiceRecorder) return;
@@ -1185,9 +1189,12 @@ async function toggleVoiceRecording() {
     voiceStartedAt = Date.now();
     voiceMime = recorder.mimeType || selected || 'audio/webm';
     $('recordingBar').hidden = false;
-    $('recordingText').textContent = '녹음 중 00:00 · 종료하면 전송됩니다';
-    $('voiceb').textContent = '녹음 종료 · 전송';
+    $('recordingText').textContent = '00:00';
+    $('recordingProgress').style.width = '0%';
+    $('voiceb').disabled = true;
     $('voiceb').classList.add('recording');
+    $('voiceSend').disabled = false;
+    $('voiceSend').textContent = '보내기';
     recorder.addEventListener('dataavailable', function (event) {
       if (event.data && event.data.size) voiceParts.push(event.data);
     });
@@ -1200,30 +1207,43 @@ async function toggleVoiceRecording() {
       var cancelled = voiceCancelled;
       var finalType = audioTypeOf(recorder.mimeType || voiceMime) || 'audio/webm';
       var blob = new Blob(voiceParts, { type: finalType });
+      var recordedConversation = voiceConversationId;
       voiceParts = [];
       if (voiceTimer) { clearInterval(voiceTimer); voiceTimer = null; }
+      if (voiceLimitTimer) { clearTimeout(voiceLimitTimer); voiceLimitTimer = null; }
       if (voiceStream) voiceStream.getTracks().forEach(function (track) { track.stop(); });
       voiceStream = null;
       voiceRecorder = null;
       voiceMime = '';
       voiceStartedAt = 0;
-      $('recordingBar').hidden = true;
-      $('voiceb').textContent = '음성';
-      $('voiceb').classList.remove('recording');
-      var recordedConversation = voiceConversationId;
       voiceConversationId = null;
-      if (cancelled) { hint('녹음을 취소했습니다.'); return; }
+      $('recordingBar').hidden = true;
+      $('voiceb').disabled = false;
+      $('voiceb').classList.remove('recording');
+      $('voiceSend').disabled = false;
+      $('voiceSend').textContent = '보내기';
+      $('recordingProgress').style.width = '0%';
+      if (cancelled) return;
       sendAudioBlob(blob, finalType, recordedConversation);
     });
-    recorder.start(400);
-    voiceTimer = setInterval(updateVoiceRecordingStatus, 500);
+    recorder.start(250);
+    voiceTimer = setInterval(updateVoiceRecordingStatus, 250);
+    voiceLimitTimer = setTimeout(function () {
+      if (voiceRecorder === recorder && recorder.state === 'recording') finishVoiceRecording();
+    }, MAX_RECORD_MS);
     updateVoiceRecordingStatus();
   } catch (e) {
+    if (voiceTimer) { clearInterval(voiceTimer); voiceTimer = null; }
+    if (voiceLimitTimer) { clearTimeout(voiceLimitTimer); voiceLimitTimer = null; }
     if (voiceStream) voiceStream.getTracks().forEach(function (track) { track.stop(); });
-    voiceStream = null; voiceRecorder = null; voiceParts = []; voiceMime = ''; voiceConversationId = null;
+    voiceStream = null; voiceRecorder = null; voiceParts = []; voiceMime = '';
+    voiceConversationId = null; voiceStartedAt = 0;
     $('recordingBar').hidden = true;
-    $('voiceb').textContent = '음성';
+    $('voiceb').disabled = false;
     $('voiceb').classList.remove('recording');
+    $('voiceSend').disabled = false;
+    $('voiceSend').textContent = '보내기';
+    $('recordingProgress').style.width = '0%';
     hint(e && e.name === 'NotAllowedError' ? '마이크 권한을 허용해야 녹음할 수 있습니다.' : '마이크에 접근하지 못했습니다.');
   } finally {
     voiceStarting = false;
@@ -2225,6 +2245,7 @@ function init() {
   $('gifb').addEventListener('click', openGifPicker);
   $('voiceb').addEventListener('click', toggleVoiceRecording);
   $('voiceCancel').addEventListener('click', function () { stopVoiceRecording(true); });
+  $('voiceSend').addEventListener('click', finishVoiceRecording);
   $('gifClose').addEventListener('click', closeGifPicker);
   $('gifPicker').addEventListener('click', function (e) { if (e.target === $('gifPicker')) closeGifPicker(); });
   $('gifSearchBtn').addEventListener('click', searchGifs);
