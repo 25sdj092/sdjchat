@@ -252,15 +252,23 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 /* 음성 메시지와 녹음 UI */
 #voiceb{padding:8px 9px;white-space:nowrap}
 #voiceb.recording{background:#fff0f0;border-color:#dc2626;color:#b91c1c}
-#recordingBar{display:flex;align-items:center;gap:8px;margin:0 14px 7px;padding:7px 10px;border:1px solid #fecaca;background:#fff7f7;border-radius:6px;color:#991b1b;font-size:12px}
-#recordingText{flex:1;min-width:0}
-.recording-dot{width:8px;height:8px;border-radius:50%;background:#dc2626;flex:none;animation:voice-pulse 1.1s ease-in-out infinite}
-#voiceCancel{padding:2px 8px;font-size:11px}
+#recordingBar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 14px 8px;padding:9px 10px;border:1px solid #fecaca;background:#fff7f7;border-radius:10px;color:#991b1b}
+.recording-status{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.recording-dot{width:9px;height:9px;border-radius:50%;background:#dc2626;flex:none}
+#recordingText{font-size:15px;font-variant-numeric:tabular-nums;line-height:1;font-weight:700}
+.recording-limit{font-size:12px;color:#9ca3af;white-space:nowrap}
+.recording-track{height:5px;flex:1;min-width:24px;background:#fee2e2;border-radius:99px;overflow:hidden}
+#recordingProgress{display:block;width:0;height:100%;background:#dc2626;border-radius:99px;transition:width .2s linear}
+.recording-actions{display:flex;gap:6px;flex:none}
+#voiceCancel,#voiceSend{min-width:56px;padding:6px 10px;font-size:12px}
 .b.audio{min-width:min(270px,70vw);max-width:min(330px,76vw);padding:8px 10px;background:#f0f3f8;border-radius:12px}
 .voice-player{display:block;width:100%;height:38px}
-@keyframes voice-pulse{50%{opacity:.35}}
 @media(max-width:700px){
-  #recordingBar{margin-left:8px;margin-right:8px}
+  #recordingBar{margin-left:8px;margin-right:8px;gap:8px;padding:8px}
+  .recording-status{gap:6px}
+  #recordingText{font-size:14px}
+  .recording-track{min-width:18px}
+  #voiceCancel,#voiceSend{min-width:48px;padding:6px 8px}
   #cf{gap:5px;padding-left:8px;padding-right:8px}
   #voiceb{padding-left:7px;padding-right:7px}
   .b.audio{min-width:min(250px,72vw)}
