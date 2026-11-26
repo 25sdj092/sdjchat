@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20261124-2">
 <link rel="shortcut icon" href="/favicon.svg?v=20261124-2">
 <link rel="apple-touch-icon" href="/favicon.svg?v=20261124-2">
-<link rel="stylesheet" href="style.css?v=20261125-voice-modal">
+<link rel="stylesheet" href="style.css?v=20261126-voice-30s">
 </head>
 <body>
 
@@ -104,7 +104,18 @@
       <div id="hint"></div>
       <div id="replying" hidden><span id="replyText"></span><button id="replyClear" type="button" aria-label="답글 취소">취소</button></div>
       <div id="mentionMenu" hidden></div>
-      <div id="recordingBar" hidden><span class="recording-dot"></span><span id="recordingText">녹음 중 00:00 · 종료하면 전송됩니다</span><button id="voiceCancel" type="button">취소</button></div>
+      <div id="recordingBar" hidden role="group" aria-label="음성 녹음">
+        <div class="recording-status">
+          <span class="recording-dot" aria-hidden="true"></span>
+          <strong id="recordingText">00:00</strong>
+          <span class="recording-limit">/ 00:30</span>
+          <div class="recording-track" aria-hidden="true"><span id="recordingProgress"></span></div>
+        </div>
+        <div class="recording-actions">
+          <button id="voiceCancel" type="button" aria-label="녹음 취소">취소</button>
+          <button id="voiceSend" type="button" class="pri">보내기</button>
+        </div>
+      </div>
       <form id="cf">
         <button id="at" type="button" aria-label="사진 첨부">사진</button>
         <button id="gifb" type="button" aria-label="GIF 검색">GIF</button>
@@ -131,6 +142,6 @@
 
 <script src="config.js"></script>
 <script src="supabase.js"></script>
-<script src="app.js?v=20261125-voice-modal-v2"></script>
+<script src="app.js?v=20261126-voice-30s-ux"></script>
 </body>
 </html>
